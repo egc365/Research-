@@ -53,6 +53,14 @@ export const plugin = {
     return failed ? { ok: false, message: failed.message, checks } : { ok: true, checks };
   },
 
+  async validate({ filePath, content, store }) {
+    const rules = store.db.prepare('SELECT * FROM policy_rules WHERE enabled=1 ORDER BY rule_id').all();
+    const applicable = rules.filter(rule => rule.rule_type !== 'deny_write' && applies(rule.scope_path, filePath));
+    const checks = applicable.map(rule => evaluate(rule, content, filePath, 'validator'));
+    const failed = checks.find(check => check.ok === false);
+    return failed ? { ok: false, message: failed.message, checks } : { ok: true, checks };
+  },
+
   async action({ action, payload, store }) {
     if (action === 'list') {
       return store.db.prepare('SELECT * FROM policy_rules ORDER BY scope_path, rule_id').all();

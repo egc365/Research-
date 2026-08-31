@@ -205,6 +205,17 @@ export class ControlStore {
     }
     const bytes = fs.readFileSync(target);
     const checksum = sha256(bytes);
+    if (toState === 'validated') {
+      const validation = metadata?.validation;
+      const receiptsOk = validation?.ok === true
+        && (!validation.checksum || validation.checksum === checksum);
+      if (!receiptsOk) {
+        const error = new Error('VALIDATION_RECEIPTS_REQUIRED');
+        error.code = 'VALIDATION_RECEIPTS_REQUIRED';
+        error.validation = validation || null;
+        throw error;
+      }
+    }
     if (artifact.checksum && artifact.checksum !== checksum) {
       const error = new Error('REGISTRY_CHECKSUM_STALE');
       error.code = 'REGISTRY_CHECKSUM_STALE';
@@ -237,6 +248,73 @@ export class ControlStore {
 
   getPromotedVersion(filePath) {
     return this.db.prepare(`SELECT version_id,path,checksum,kind,content,created_at FROM artifact_versions WHERE path=? AND kind='promoted' ORDER BY version_id DESC LIMIT 1`).get(path.resolve(filePath)) || null;
+  }
+
+  walkFiles(rootPath, dir = null, acc = []) {
+    const root = path.resolve(rootPath);
+    const target = dir ? path.resolve(dir) : root;
+    for (const entry of fs.readdirSync(target, { withFileTypes: true })) {
+      if (entry.name === '.research-ops' || entry.name === '.git') continue;
+      const full = path.join(target, entry.name);
+      if (entry.isDirectory()) this.walkFiles(root, full, acc);
+      else if (entry.isFile()) acc.push(full);
+    }
+    return acc;
+  }
+
+  detectMoves(rootPath) {
+    const root = path.resolve(rootPath);
+    const rows = this.db.prepare('SELECT * FROM artifact_registry WHERE workspace_root=?').all(root);
+    const missing = rows.filter(row => !fs.existsSync(row.path));
+    if (!missing.length) return [];
+    const registered = new Set(rows.map(row => row.path));
+    const proposals = [];
+    for (const file of this.walkFiles(root)) {
+      if (registered.has(file)) continue;
+      const checksum = sha256(fs.readFileSync(file));
+      const matches = missing.filter(row => row.checksum === checksum);
+      if (matches.length === 1) {
+        proposals.push({ fromPath: matches[0].path, toPath: file, checksum, state: matches[0].state });
+      }
+    }
+    return proposals;
+  }
+
+  applyMove({ rootPath, fromPath, toPath, actor = 'human' }) {
+    const root = path.resolve(rootPath);
+    const from = path.resolve(fromPath);
+    const to = this.assertInsideWorkspace(root, toPath);
+    const row = this.getArtifact(from);
+    if (!row) throw new Error('Move source is not registered');
+    if (fs.existsSync(from)) throw new Error('Move source still exists on disk');
+    if (this.getArtifact(to)) throw new Error('Move target is already registered');
+    const checksum = sha256(fs.readFileSync(to));
+    if (row.checksum && row.checksum !== checksum) {
+      const error = new Error('MOVE_CHECKSUM_MISMATCH');
+      error.code = 'MOVE_CHECKSUM_MISMATCH';
+      throw error;
+    }
+    const ts = now();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare('UPDATE artifact_registry SET path=?, updated_at=? WHERE path=?').run(to, ts, from);
+      // Promoted snapshots follow the artifact; the event ledger stays untouched.
+      this.db.prepare('UPDATE artifact_versions SET path=? WHERE path=?').run(to, from);
+      this.appendEvent({
+        filePath: to,
+        eventType: 'MOVE',
+        fromState: row.state,
+        toState: row.state,
+        checksum,
+        actor,
+        metadata: { from_path: from, to_path: to }
+      });
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    return this.getArtifact(to);
   }
 
   bindTrace({ filePath, runId, spanId = null, actor = 'human' }) {

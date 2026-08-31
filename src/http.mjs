@@ -75,7 +75,7 @@ async function api(req, res, url, { store, plugins, surface }) {
   const match = url.pathname.match(/^\/api\/plugins\/([^/]+)\/action$/);
   if (req.method === 'POST' && match) {
     const body = enforceSurfaceActor(surface, await readJson(req));
-    const result = await plugins.action(decodeURIComponent(match[1]), body.action, body.payload || {}, { surface });
+    const result = await plugins.action(decodeURIComponent(match[1]), body.action, body.payload || {}, { surface, plugins });
     return json(res, 200, result);
   }
   return false;
@@ -93,15 +93,16 @@ export function createAppServer({ store, plugins, surface = 'owner' }) {
       if (surface === 'owner' && staticFile(res, decodeURIComponent(url.pathname))) return;
       json(res, 404, { error: 'NOT_FOUND' });
     } catch (error) {
-      const status = error.code === 'PROMOTION_REQUIRES_HUMAN_APPROVAL' ? 403
-        : error.code === 'PREFLIGHT_BLOCKED' || error.code === 'STALE_BASE' || error.code === 'REGISTRY_CHECKSUM_STALE' ? 409
+      const status = error.code === 'PROMOTION_REQUIRES_HUMAN_APPROVAL' || error.code === 'OWNER_SURFACE_ONLY' ? 403
+        : ['PREFLIGHT_BLOCKED','STALE_BASE','REGISTRY_CHECKSUM_STALE','VALIDATION_FAILED','VALIDATION_RECEIPTS_REQUIRED','MOVE_CHECKSUM_MISMATCH'].includes(error.code) ? 409
         : 400;
       json(res, status, {
         error: error.code || 'REQUEST_FAILED',
         message: error.message,
         expected: error.expected,
         actual: error.actual,
-        preflight: error.preflight
+        preflight: error.preflight,
+        validation: error.validation
       });
     }
   });

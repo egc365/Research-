@@ -48,6 +48,19 @@ export class PluginHost {
     return results;
   }
 
+  async runValidators(context) {
+    const results = [];
+    let ok = true;
+    for (const plugin of this.plugins.values()) {
+      if (!plugin.validate) continue;
+      const result = await plugin.validate({ ...context, store: this.store });
+      if (!result) continue;
+      results.push({ plugin: plugin.id, ...result });
+      if (result.ok === false) ok = false;
+    }
+    return { ok, results };
+  }
+
   async action(pluginId, action, payload, context = {}) {
     const plugin = this.plugins.get(pluginId);
     if (!plugin?.action) throw new Error(`Plugin has no action handler: ${pluginId}`);
