@@ -48,9 +48,9 @@ export class PluginHost {
     return results;
   }
 
-  async action(pluginId, action, payload) {
+  async action(pluginId, action, payload, context = {}) {
     const plugin = this.plugins.get(pluginId);
     if (!plugin?.action) throw new Error(`Plugin has no action handler: ${pluginId}`);
-    return plugin.action({ action, payload, store: this.store });
+    return plugin.action({ action, payload, store: this.store, ...context });
   }
 }
