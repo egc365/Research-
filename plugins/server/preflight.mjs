@@ -61,9 +61,16 @@ export const plugin = {
     return failed ? { ok: false, message: failed.message, checks } : { ok: true, checks };
   },
 
-  async action({ action, payload, store }) {
+  async action({ action, payload, store, surface }) {
     if (action === 'list') {
       return store.db.prepare('SELECT * FROM policy_rules ORDER BY scope_path, rule_id').all();
+    }
+    if (surface === 'agent') {
+      // Agents may not change validation policy (spec §6): the rules that mint
+      // validation receipts are owner-surface state.
+      const error = new Error('Policy rules are managed on the owner surface.');
+      error.code = 'OWNER_SURFACE_ONLY';
+      throw error;
     }
     if (action === 'add') {
       const ts = new Date().toISOString();

@@ -82,6 +82,26 @@ test('agent surface cannot register workspaces', async () => {
   } finally { await f.close(); }
 });
 
+test('agent surface cannot change validation policy', async () => {
+  const f = await fixture();
+  try {
+    const add = await call(f.agentBase, 'POST', '/api/plugins/preflight/action', {
+      action: 'add', payload: { scopePath: f.root, ruleType: 'forbid_text', rule: { text: 'x' } }
+    });
+    assert.equal(add.status, 403);
+    assert.equal((await add.json()).error, 'OWNER_SURFACE_ONLY');
+    const toggle = await call(f.agentBase, 'POST', '/api/plugins/preflight/action', {
+      action: 'toggle', payload: { ruleId: 1, enabled: false }
+    });
+    assert.equal(toggle.status, 403);
+    // list stays readable, and the owner surface can still add rules.
+    assert.equal((await call(f.agentBase, 'POST', '/api/plugins/preflight/action', { action: 'list', payload: {} })).status, 200);
+    assert.equal((await call(f.ownerBase, 'POST', '/api/plugins/preflight/action', {
+      action: 'add', payload: { scopePath: f.root, ruleType: 'forbid_text', rule: { text: 'TODO-forbidden' } }
+    })).status, 200);
+  } finally { await f.close(); }
+});
+
 test('agent surface serves no UI', async () => {
   const f = await fixture();
   try {
