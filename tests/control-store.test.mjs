@@ -67,6 +67,48 @@ test('editing promoted bytes opens a working successor without changing promoted
   } finally { f.store.close(); fs.rmSync(f.dir, { recursive:true, force:true }); }
 });
 
+test('editing a candidate or validated file demotes it to working', () => {
+  const f = fixture();
+  try {
+    const opened = f.store.readFile(f.root, f.file);
+    f.store.transition({ filePath:f.file, toState:'candidate', actor:'agent' });
+    f.store.transition({ filePath:f.file, toState:'validated', actor:'agent' });
+    const edited = f.store.writeFile({ rootPath:f.root, filePath:f.file, content:'# sneaky change\n', expectedChecksum:opened.checksum, actor:'agent' });
+    assert.equal(edited.artifact.state, 'working');
+    const events = f.store.history(f.file);
+    const demotion = events.find(e => e.event_type === 'WRITE_DEMOTION');
+    assert.ok(demotion, 'expected WRITE_DEMOTION event');
+    assert.equal(demotion.from_state, 'validated');
+    assert.equal(demotion.to_state, 'working');
+  } finally { f.store.close(); fs.rmSync(f.dir, { recursive:true, force:true }); }
+});
+
+test('external filesystem edit to a validated file demotes it on next read', () => {
+  const f = fixture();
+  try {
+    f.store.readFile(f.root, f.file);
+    f.store.transition({ filePath:f.file, toState:'candidate', actor:'agent' });
+    f.store.transition({ filePath:f.file, toState:'validated', actor:'agent' });
+    fs.writeFileSync(f.file, '# edited behind the registry\n');
+    const reread = f.store.readFile(f.root, f.file);
+    assert.equal(reread.artifact.state, 'working');
+    const demotion = f.store.history(f.file).find(e => e.event_type === 'WRITE_DEMOTION');
+    assert.ok(demotion, 'expected WRITE_DEMOTION event');
+    assert.equal(demotion.actor, 'filesystem');
+  } finally { f.store.close(); fs.rmSync(f.dir, { recursive:true, force:true }); }
+});
+
+test('rewriting identical bytes does not demote a validated file', () => {
+  const f = fixture();
+  try {
+    const opened = f.store.readFile(f.root, f.file);
+    f.store.transition({ filePath:f.file, toState:'candidate', actor:'agent' });
+    f.store.transition({ filePath:f.file, toState:'validated', actor:'agent' });
+    const rewritten = f.store.writeFile({ rootPath:f.root, filePath:f.file, content:'# one\n', expectedChecksum:opened.checksum, actor:'agent' });
+    assert.equal(rewritten.artifact.state, 'validated');
+  } finally { f.store.close(); fs.rmSync(f.dir, { recursive:true, force:true }); }
+});
+
 test('governance history is append-only across transitions', () => {
   const f = fixture();
   try {

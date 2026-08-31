@@ -68,7 +68,10 @@ export class ControlStore {
     const divergedFromPromotion = existing?.state === 'promoted'
       && existing.promoted_checksum
       && existing.promoted_checksum !== checksum;
-    const nextState = divergedFromPromotion ? 'working' : (existing?.state || 'working');
+    const invalidatedByEdit = (existing?.state === 'candidate' || existing?.state === 'validated')
+      && existing.checksum
+      && existing.checksum !== checksum;
+    const nextState = (divergedFromPromotion || invalidatedByEdit) ? 'working' : (existing?.state || 'working');
 
     this.db.prepare(`
       INSERT INTO artifact_registry(path,workspace_root,state,checksum,created_at,updated_at)
@@ -85,6 +88,17 @@ export class ControlStore {
         checksum,
         actor: 'filesystem',
         metadata: { promoted_checksum: existing.promoted_checksum }
+      });
+    }
+    if (invalidatedByEdit) {
+      this.appendEvent({
+        filePath: target,
+        eventType: 'WRITE_DEMOTION',
+        fromState: existing.state,
+        toState: 'working',
+        checksum,
+        actor: 'filesystem',
+        metadata: { registry_checksum: existing.checksum }
       });
     }
     return this.getArtifact(target);
@@ -138,7 +152,9 @@ export class ControlStore {
     const divergedFromPromotion = beforeArtifact?.state === 'promoted'
       && beforeArtifact.promoted_checksum
       && beforeArtifact.promoted_checksum !== checksum;
-    const nextState = divergedFromPromotion ? 'working' : (beforeArtifact?.state || 'working');
+    const invalidatedByEdit = (beforeArtifact?.state === 'candidate' || beforeArtifact?.state === 'validated')
+      && checksum !== actual;
+    const nextState = (divergedFromPromotion || invalidatedByEdit) ? 'working' : (beforeArtifact?.state || 'working');
 
     this.db.prepare(`
       INSERT INTO artifact_registry(path,workspace_root,state,checksum,last_run_id,last_span_id,created_at,updated_at)
@@ -157,6 +173,19 @@ export class ControlStore {
         runId,
         spanId,
         metadata: { promoted_checksum: beforeArtifact.promoted_checksum }
+      });
+    }
+    if (invalidatedByEdit) {
+      this.appendEvent({
+        filePath: target,
+        eventType: 'WRITE_DEMOTION',
+        fromState: beforeArtifact.state,
+        toState: 'working',
+        checksum,
+        actor,
+        runId,
+        spanId,
+        metadata: { previous_checksum: actual }
       });
     }
     return this.readFile(rootPath, target);
