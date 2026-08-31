@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Research Operations</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">RESEARCH OPERATIONS</div>
+      <h1>Control plane</h1>
+    </div>
+    <div class="toolbar">
+      <select id="workspaceSelect" aria-label="Workspace"></select>
+      <button id="addWorkspace">Add path</button>
+      <button id="saveFile" class="primary">Save</button>
+    </div>
+  </header>
+
+  <main class="shell">
+    <aside class="tree-pane">
+      <div class="pane-title">Workspace</div>
+      <div id="tree" class="tree"></div>
+    </aside>
+
+    <section class="editor-pane">
+      <div class="editor-head">
+        <div>
+          <div id="fileName" class="file-name">Select a file</div>
+          <div id="fileMeta" class="muted"></div>
+        </div>
+        <div id="stateBadge" class="badge">—</div>
+      </div>
+      <textarea id="editor" spellcheck="false" disabled></textarea>
+      <div id="statusBar" class="statusbar">Ready.</div>
+    </section>
+
+    <aside class="control-pane">
+      <div id="pluginTabs" class="tabs"></div>
+      <div id="pluginPanel" class="plugin-panel">
+        <div class="empty">Select a file to inspect control state.</div>
+      </div>
+    </aside>
+  </main>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
