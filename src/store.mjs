@@ -61,14 +61,32 @@ export class ControlStore {
 
   ensureRegistered(rootPath, filePath) {
     const target = this.assertInsideWorkspace(rootPath, filePath);
+    const existing = this.getArtifact(target);
     const bytes = fs.readFileSync(target);
     const checksum = sha256(bytes);
     const ts = now();
+    const divergedFromPromotion = existing?.state === 'promoted'
+      && existing.promoted_checksum
+      && existing.promoted_checksum !== checksum;
+    const nextState = divergedFromPromotion ? 'working' : (existing?.state || 'working');
+
     this.db.prepare(`
       INSERT INTO artifact_registry(path,workspace_root,state,checksum,created_at,updated_at)
-      VALUES(?,?, 'working', ?, ?, ?)
-      ON CONFLICT(path) DO UPDATE SET checksum=excluded.checksum, updated_at=excluded.updated_at
-    `).run(target, path.resolve(rootPath), checksum, ts, ts);
+      VALUES(?,?,?,?,?,?)
+      ON CONFLICT(path) DO UPDATE SET state=excluded.state, checksum=excluded.checksum, updated_at=excluded.updated_at
+    `).run(target, path.resolve(rootPath), nextState, checksum, ts, ts);
+
+    if (divergedFromPromotion) {
+      this.appendEvent({
+        filePath: target,
+        eventType: 'WORKING_DIVERGENCE',
+        fromState: 'promoted',
+        toState: 'working',
+        checksum,
+        actor: 'filesystem',
+        metadata: { promoted_checksum: existing.promoted_checksum }
+      });
+    }
     return this.getArtifact(target);
   }
 
@@ -101,6 +119,7 @@ export class ControlStore {
 
   writeFile({ rootPath, filePath, content, expectedChecksum, actor = 'human', runId = null, spanId = null }) {
     const target = this.assertInsideWorkspace(rootPath, filePath);
+    const beforeArtifact = this.getArtifact(target);
     const before = fs.existsSync(target) ? fs.readFileSync(target) : Buffer.from('');
     const actual = sha256(before);
     if (expectedChecksum && actual !== expectedChecksum) {
@@ -116,12 +135,30 @@ export class ControlStore {
     const checksum = sha256(after);
     const ts = now();
     const workspace = path.resolve(rootPath);
+    const divergedFromPromotion = beforeArtifact?.state === 'promoted'
+      && beforeArtifact.promoted_checksum
+      && beforeArtifact.promoted_checksum !== checksum;
+    const nextState = divergedFromPromotion ? 'working' : (beforeArtifact?.state || 'working');
+
     this.db.prepare(`
       INSERT INTO artifact_registry(path,workspace_root,state,checksum,last_run_id,last_span_id,created_at,updated_at)
-      VALUES(?,?, 'working', ?,?,?,?,?)
-      ON CONFLICT(path) DO UPDATE SET checksum=excluded.checksum,last_run_id=excluded.last_run_id,last_span_id=excluded.last_span_id,updated_at=excluded.updated_at
-    `).run(target, workspace, checksum, runId, spanId, ts, ts);
+      VALUES(?,?,?,?,?,?,?,?)
+      ON CONFLICT(path) DO UPDATE SET state=excluded.state,checksum=excluded.checksum,last_run_id=excluded.last_run_id,last_span_id=excluded.last_span_id,updated_at=excluded.updated_at
+    `).run(target, workspace, nextState, checksum, runId, spanId, ts, ts);
     this.appendEvent({ filePath: target, eventType: 'WRITE', checksum, actor, runId, spanId, metadata: { previous_checksum: actual } });
+    if (divergedFromPromotion) {
+      this.appendEvent({
+        filePath: target,
+        eventType: 'WORKING_DIVERGENCE',
+        fromState: 'promoted',
+        toState: 'working',
+        checksum,
+        actor,
+        runId,
+        spanId,
+        metadata: { promoted_checksum: beforeArtifact.promoted_checksum }
+      });
+    }
     return this.readFile(rootPath, target);
   }
 
