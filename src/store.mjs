@@ -7,6 +7,14 @@ import { allowedTransitions, schemaSql } from './schema.mjs';
 const now = () => new Date().toISOString();
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
+function validateStateObject(value, label = 'state') {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    const error = new Error(`INVALID_STATE_PATCH: ${label} must be a JSON object`);
+    error.code = 'INVALID_STATE_PATCH';
+    throw error;
+  }
+}
+
 export class ControlStore {
   constructor(dbPath) {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
@@ -315,6 +323,51 @@ export class ControlStore {
       throw error;
     }
     return this.getArtifact(to);
+  }
+
+  // SKILL.state (arXiv 2608.26263) inner loop: the model proposes a state patch
+  // ΔΣ (a JSON dictionary of key mutations and deletions); the runtime validates
+  // and merges Σ_{t+1} = Σ_t ⊕ ΔΣ with null-deletion semantics. The model never
+  // writes authoritative state, and an invalid patch changes nothing.
+  getExecutionState(runId) {
+    const row = this.db.prepare('SELECT * FROM execution_state WHERE run_id=?').get(runId);
+    return row ? { ...row, state: JSON.parse(row.state_json) } : null;
+  }
+
+  initExecutionState({ runId, skillPath = null, initial = {} }) {
+    if (!runId) throw new Error('runId is required');
+    if (this.getExecutionState(runId)) throw new Error('Execution state already exists for run');
+    validateStateObject(initial);
+    this.db.prepare('INSERT INTO execution_state(run_id,skill_path,state_json,state_version,updated_at) VALUES(?,?,?,0,?)')
+      .run(runId, skillPath, JSON.stringify(initial), now());
+    return this.getExecutionState(runId);
+  }
+
+  applyStatePatch({ runId, patch, expectedVersion }) {
+    const current = this.getExecutionState(runId);
+    if (!current) throw new Error('Execution state is not initialized for run');
+    if (expectedVersion !== undefined && expectedVersion !== null && Number(expectedVersion) !== current.state_version) {
+      const error = new Error('STATE_VERSION_CONFLICT');
+      error.code = 'STATE_VERSION_CONFLICT';
+      error.expected = expectedVersion;
+      error.actual = current.state_version;
+      throw error;
+    }
+    validateStateObject(patch, 'patch');
+    const merged = { ...current.state };
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === null) delete merged[key];
+      else merged[key] = value;
+    }
+    const serialized = JSON.stringify(merged);
+    if (Buffer.byteLength(serialized, 'utf8') > 262144) {
+      const error = new Error('STATE_TOO_LARGE');
+      error.code = 'STATE_TOO_LARGE';
+      throw error;
+    }
+    this.db.prepare('UPDATE execution_state SET state_json=?, state_version=state_version+1, updated_at=? WHERE run_id=?')
+      .run(serialized, now(), runId);
+    return this.getExecutionState(runId);
   }
 
   bindTrace({ filePath, runId, spanId = null, actor = 'human' }) {

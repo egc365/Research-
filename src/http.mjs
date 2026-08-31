@@ -94,7 +94,7 @@ export function createAppServer({ store, plugins, surface = 'owner' }) {
       json(res, 404, { error: 'NOT_FOUND' });
     } catch (error) {
       const status = error.code === 'PROMOTION_REQUIRES_HUMAN_APPROVAL' || error.code === 'OWNER_SURFACE_ONLY' ? 403
-        : ['PREFLIGHT_BLOCKED','STALE_BASE','REGISTRY_CHECKSUM_STALE','VALIDATION_FAILED','VALIDATION_RECEIPTS_REQUIRED','MOVE_CHECKSUM_MISMATCH'].includes(error.code) ? 409
+        : ['PREFLIGHT_BLOCKED','STALE_BASE','REGISTRY_CHECKSUM_STALE','VALIDATION_FAILED','VALIDATION_RECEIPTS_REQUIRED','MOVE_CHECKSUM_MISMATCH','STATE_VERSION_CONFLICT','STATE_TOO_LARGE','INVALID_STATE_PATCH'].includes(error.code) ? 409
         : 400;
       json(res, status, {
         error: error.code || 'REQUEST_FAILED',

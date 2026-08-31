@@ -50,6 +50,14 @@ CREATE TABLE IF NOT EXISTS artifact_versions (
   UNIQUE(path, checksum, kind)
 );
 
+CREATE TABLE IF NOT EXISTS execution_state (
+  run_id TEXT PRIMARY KEY,
+  skill_path TEXT,
+  state_json TEXT NOT NULL,
+  state_version INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS policy_rules (
   rule_id INTEGER PRIMARY KEY AUTOINCREMENT,
   scope_path TEXT NOT NULL,

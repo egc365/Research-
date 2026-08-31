@@ -16,8 +16,17 @@ This repository is the clean-room successor to the useful parts of Card Workshop
 - Requires `actor=human` for promotion.
 - Freezes exact promoted bytes in an immutable snapshot while allowing the working file to change afterward.
 - Keeps an append-only governance event log.
-- Loads Governance, History, Diff, Preflight, and Trajectory panels through the same plugin host.
+- Loads Governance, History, Diff, Preflight, Trajectory, Moves, Execution state, and Statistics panels through the same plugin host.
 - Stores only run/span bindings for DeepSeek Harness provenance. DeepSeek's append-only session log remains the trace authority.
+
+## V1 hardening on top of V0
+
+- **Two surfaces, one store.** The owner surface (default `:8787`) serves the UI and honors the request actor. The agent surface (default `:8788`, `AGENT_PORT`) is API-only and forces `actor=agent` at the transport boundary, so human-only promotion is structural, not self-reported. Agents point their tools at the agent port.
+- **Demotion on any content change.** Editing a `candidate` or `validated` file — through the UI or externally on disk — demotes it to `working` with a `WRITE_DEMOTION` event. Promotion can only apply to bytes the validator saw.
+- **Validation receipts.** `candidate → validated` requires deterministic server-side validator receipts (the preflight policy rules run as validators); receipts record the checksum they were minted against and are refused if the bytes differ. Callers cannot supply their own receipts through the governance plugin.
+- **Move detection.** A registered path missing from disk is rematched against unregistered files by checksum; accepting the remap re-keys the registry row and promoted snapshots in one transaction and appends a `MOVE` event. Owner surface only.
+- **Execution state (SKILL.state, arXiv 2608.26263).** Per-run bounded structured state: agents propose JSON patches (`null` deletes a key); the runtime validates, merges (`Σ_{t+1} = Σ_t ⊕ ΔΣ_t`), and versions. Malformed or stale-version patches change nothing. Reasoning traces are never stored.
+- **Statistics.** The statistics plugin reads the registry and event ledger only, never raw files.
 
 ## Run
 
