@@ -49,6 +49,24 @@ test('promotion is human-only and freezes exact bytes', () => {
   } finally { f.store.close(); fs.rmSync(f.dir, { recursive:true, force:true }); }
 });
 
+test('editing promoted bytes opens a working successor without changing promoted snapshot', () => {
+  const f = fixture();
+  try {
+    const opened = f.store.readFile(f.root, f.file);
+    f.store.transition({ filePath:f.file, toState:'candidate', actor:'agent' });
+    f.store.transition({ filePath:f.file, toState:'validated', actor:'agent' });
+    const promoted = f.store.transition({ filePath:f.file, toState:'promoted', actor:'human' });
+    const promotedChecksum = promoted.promoted_checksum;
+    const edited = f.store.writeFile({ rootPath:f.root, filePath:f.file, content:'# two\n', expectedChecksum:opened.checksum, actor:'human' });
+    assert.equal(edited.artifact.state, 'working');
+    assert.equal(edited.artifact.promoted_checksum, promotedChecksum);
+    assert.notEqual(edited.checksum, promotedChecksum);
+    const frozen = f.store.getPromotedVersion(f.file);
+    assert.equal(frozen.checksum, promotedChecksum);
+    assert.equal(Buffer.from(frozen.content).toString('utf8'), '# one\n');
+  } finally { f.store.close(); fs.rmSync(f.dir, { recursive:true, force:true }); }
+});
+
 test('governance history is append-only across transitions', () => {
   const f = fixture();
   try {
