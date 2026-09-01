@@ -3,7 +3,11 @@ export const plugin = {
   label: 'Statistics',
   order: 70,
   clientModule: '/plugins/statistics.js',
-  description: 'Registry-derived workspace statistics. Reads the control plane, never raw files.',
+  scope: 'workspace',
+  surface: 'right',
+  category: 'analysis',
+  requiresWorkspace: true,
+  description: 'Counts and recent activity for this workspace, computed from the ledger — never by reading your files.',
   async action({ action, payload, store }) {
     if (action !== 'workspace-summary') throw new Error(`Unknown statistics action: ${action}`);
     const root = payload.rootPath;

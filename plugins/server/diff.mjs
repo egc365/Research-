@@ -20,7 +20,11 @@ export const plugin = {
   label: 'Diff',
   order: 30,
   clientModule: '/plugins/diff.js',
-  description: 'Compare current working bytes to the last promoted snapshot.',
+  scope: 'file',
+  surface: 'right',
+  category: 'document',
+  requiresFile: true,
+  description: 'Shows exactly what changed between the current file and the last promoted version.',
   async action({ action, payload, store }) {
     if (action !== 'promoted-vs-current') throw new Error(`Unknown diff action: ${action}`);
     const promoted = store.getPromotedVersion(payload.path);

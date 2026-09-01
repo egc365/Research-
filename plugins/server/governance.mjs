@@ -3,7 +3,11 @@ export const plugin = {
   label: 'Governance',
   order: 10,
   clientModule: '/plugins/governance.js',
-  description: 'Lifecycle transitions and owner-only promotion.',
+  scope: 'file',
+  surface: 'right',
+  category: 'governance',
+  requiresFile: true,
+  description: 'Moves a file through working, candidate, validated, promoted. Only you can promote, and promotion freezes the exact bytes.',
   async action({ action, payload, store, plugins }) {
     if (action === 'transition') {
       let metadata = payload.metadata || null;

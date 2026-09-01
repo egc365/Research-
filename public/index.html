@@ -9,8 +9,8 @@
 <body>
   <header class="topbar">
     <div>
-      <div class="eyebrow">RESEARCH OPERATIONS</div>
-      <h1>Control plane</h1>
+      <div class="eyebrow">WORKBENCH</div>
+      <h1>Research Operations</h1>
     </div>
     <div class="toolbar">
       <select id="workspaceSelect" aria-label="Workspace"></select>
@@ -33,14 +33,17 @@
         </div>
         <div id="stateBadge" class="badge">—</div>
       </div>
-      <textarea id="editor" spellcheck="false" disabled></textarea>
+      <textarea id="editor" spellcheck="false" disabled placeholder="Select a file in the tree to edit it here."></textarea>
+      <div id="centerStation" class="center-station" hidden></div>
       <div id="statusBar" class="statusbar">Ready.</div>
     </section>
 
     <aside class="control-pane">
-      <div id="pluginTabs" class="tabs"></div>
+      <div class="pane-title">Stations</div>
+      <div id="stationList" class="stations"></div>
+      <div id="stationHeader" class="station-header" hidden></div>
       <div id="pluginPanel" class="plugin-panel">
-        <div class="empty">Select a file to inspect control state.</div>
+        <div class="empty">Pick a station to open its controls here.</div>
       </div>
     </aside>
   </main>

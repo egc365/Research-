@@ -28,7 +28,14 @@ export class PluginHost {
       label: plugin.label || plugin.id,
       order: plugin.order ?? 100,
       clientModule: plugin.clientModule || null,
-      description: plugin.description || ''
+      description: plugin.description || '',
+      // Presentation metadata: tells the shell where and when a plugin can render.
+      scope: plugin.scope || 'file',
+      surface: plugin.surface || 'right',
+      category: plugin.category || 'general',
+      icon: plugin.icon || null,
+      requiresFile: plugin.requiresFile === true,
+      requiresWorkspace: plugin.requiresWorkspace === true
     })).sort((a,b) => a.order - b.order || a.label.localeCompare(b.label));
   }
 

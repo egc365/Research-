@@ -2,9 +2,9 @@ const state = {
   workspaces: [],
   workspace: null,
   file: null,
-  plugins: [],
+  stations: [],           // built-in Editor + server plugin manifest
   pluginModules: new Map(),
-  activePlugin: null,
+  activeStation: 'editor',
   dirty: false
 };
 
@@ -12,12 +12,24 @@ const $ = id => document.getElementById(id);
 const workspaceSelect = $('workspaceSelect');
 const tree = $('tree');
 const editor = $('editor');
+const centerStation = $('centerStation');
 const fileName = $('fileName');
 const fileMeta = $('fileMeta');
 const stateBadge = $('stateBadge');
 const statusBar = $('statusBar');
-const pluginTabs = $('pluginTabs');
+const stationList = $('stationList');
+const stationHeader = $('stationHeader');
 const pluginPanel = $('pluginPanel');
+
+const EDITOR_STATION = {
+  id: 'editor',
+  label: 'Editor',
+  description: 'Edit the selected file. Saving records the write in the governance ledger.',
+  surface: 'center',
+  builtin: true,
+  requiresFile: false,
+  requiresWorkspace: false
+};
 
 async function request(url, options = {}) {
   const response = await fetch(url, {
@@ -56,6 +68,7 @@ async function loadWorkspaces(selectPath = null) {
     state.workspace = null;
     tree.innerHTML = '<div class="empty">Add an absolute folder path to begin.</div>';
   }
+  renderStationList();
 }
 
 async function renderTree() {
@@ -120,7 +133,8 @@ async function openFile(path, row) {
   document.querySelectorAll('.tree-row.selected').forEach(el => el.classList.remove('selected'));
   row?.classList.add('selected');
   setStatus('Loaded exact current bytes.');
-  await renderActivePlugin();
+  renderStationList();
+  await renderActiveStation();
 }
 
 async function saveFile() {
@@ -139,53 +153,99 @@ async function saveFile() {
   state.dirty = false;
   fileMeta.textContent = `${result.path} · sha256 ${result.checksum.slice(0,12)}…`;
   stateBadge.textContent = result.artifact?.state || 'working';
-  setStatus(`Saved. ${result.preflight?.length || 0} preflight plugin result(s).`);
-  await renderActivePlugin();
+  setStatus(`Saved. ${result.preflight?.length || 0} preflight check result(s).`);
+  await renderActiveStation();
 }
 
-async function loadPlugins() {
-  state.plugins = await request('/api/plugins');
-  pluginTabs.replaceChildren();
-  for (const spec of state.plugins) {
+async function loadStations() {
+  const manifest = await request('/api/plugins');
+  state.stations = [EDITOR_STATION, ...manifest];
+  for (const spec of manifest) {
     if (spec.clientModule) {
       const mod = await import(spec.clientModule);
       state.pluginModules.set(spec.id, mod);
     }
-    const button = document.createElement('button');
-    button.className = 'tab';
-    button.textContent = spec.label;
-    button.dataset.pluginId = spec.id;
-    button.onclick = () => activatePlugin(spec.id);
-    pluginTabs.append(button);
   }
-  if (state.plugins.length) await activatePlugin(state.plugins[0].id);
+  renderStationList();
+  await activateStation('editor');
 }
 
-async function activatePlugin(id) {
-  state.activePlugin = id;
-  document.querySelectorAll('.tab').forEach(tab => tab.classList.toggle('active', tab.dataset.pluginId === id));
-  await renderActivePlugin();
+function stationAvailable(spec) {
+  if (spec.requiresWorkspace && !state.workspace) return false;
+  if (spec.requiresFile && !state.file) return false;
+  return true;
 }
 
-async function renderActivePlugin() {
-  if (!state.activePlugin) return;
-  const mod = state.pluginModules.get(state.activePlugin);
+function renderStationList() {
+  stationList.replaceChildren();
+  for (const spec of state.stations) {
+    const button = document.createElement('button');
+    button.className = 'station';
+    button.textContent = spec.label;
+    button.title = spec.description || '';
+    button.dataset.stationId = spec.id;
+    const available = stationAvailable(spec);
+    button.disabled = !available;
+    if (!available) button.title = spec.requiresFile && !state.file
+      ? `${spec.label}: select a file first.`
+      : `${spec.label}: add a workspace first.`;
+    button.classList.toggle('active', spec.id === state.activeStation);
+    button.onclick = () => activateStation(spec.id).catch(showError);
+    stationList.append(button);
+  }
+}
+
+// Switching stations must not lose the selected workspace, selected file,
+// unsaved editor text, or expanded folders: the tree and editor live in the DOM
+// permanently; stations only swap the right rail (or, for center-surface
+// plugins, overlay the center without destroying the editor).
+async function activateStation(id) {
+  state.activeStation = id;
+  renderStationList();
+  const spec = state.stations.find(s => s.id === id);
+  const centerSurface = spec && !spec.builtin && spec.surface === 'center';
+  editor.hidden = centerSurface;
+  centerStation.hidden = !centerSurface;
+  await renderActiveStation();
+}
+
+async function renderActiveStation() {
+  const spec = state.stations.find(s => s.id === state.activeStation);
+  if (!spec) return;
+  if (spec.builtin) {
+    stationHeader.hidden = false;
+    stationHeader.innerHTML = `<strong>${escapeHtml(spec.label)}</strong><div class="muted">${escapeHtml(spec.description)}</div>`;
+    pluginPanel.innerHTML = state.file
+      ? `<div class="card"><h3>Open file</h3>
+           <div class="keyval"><div class="key">Path</div><div>${escapeHtml(state.file.path)}</div></div>
+           <div class="keyval"><div class="key">State</div><div>${escapeHtml(state.file.artifact?.state || 'working')}</div></div>
+           <div class="keyval"><div class="key">Checksum</div><div>${escapeHtml(state.file.checksum.slice(0,16))}…</div></div>
+         </div>`
+      : '<div class="empty">Select a file in the tree to start editing.</div>';
+    return;
+  }
+  const mod = state.pluginModules.get(spec.id);
+  const target = (spec.surface === 'center') ? centerStation : pluginPanel;
+  stationHeader.hidden = spec.surface === 'center';
+  if (spec.surface !== 'center') {
+    stationHeader.innerHTML = `<strong>${escapeHtml(spec.label)}</strong><div class="muted">${escapeHtml(spec.description || '')}</div>`;
+  }
   if (!mod?.render) {
-    pluginPanel.innerHTML = '<div class="empty">This plugin has no client surface.</div>';
+    target.innerHTML = '<div class="empty">This station has no view.</div>';
     return;
   }
   const context = {
     rootPath: state.workspace?.root_path,
     file: state.file,
-    panel: pluginPanel,
-    api: (action, payload = {}) => request(`/api/plugins/${encodeURIComponent(state.activePlugin)}/action`, { method:'POST', body: JSON.stringify({ action, payload }) }),
+    panel: target,
+    api: (action, payload = {}) => request(`/api/plugins/${encodeURIComponent(spec.id)}/action`, { method:'POST', body: JSON.stringify({ action, payload }) }),
     refreshFile: async () => {
       if (!state.file) return;
       state.file = await request(`/api/file?root=${encodeURIComponent(state.workspace.root_path)}&path=${encodeURIComponent(state.file.path)}`);
       stateBadge.textContent = state.file.artifact?.state || 'working';
       fileMeta.textContent = `${state.file.path} · sha256 ${state.file.checksum.slice(0,12)}…`;
     },
-    rerender: renderActivePlugin,
+    rerender: renderActiveStation,
     notify: setStatus
   };
   await mod.render(context);
@@ -224,7 +284,8 @@ workspaceSelect.onchange = async () => {
   fileMeta.textContent = '';
   stateBadge.textContent = '—';
   await renderTree();
-  await renderActivePlugin();
+  renderStationList();
+  await renderActiveStation();
 };
 
 $('saveFile').onclick = () => saveFile().catch(showError);
@@ -236,4 +297,4 @@ window.addEventListener('keydown', event => {
   }
 });
 
-await Promise.all([loadWorkspaces(), loadPlugins()]);
+await Promise.all([loadWorkspaces(), loadStations()]);

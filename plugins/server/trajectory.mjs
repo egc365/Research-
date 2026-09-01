@@ -1,9 +1,13 @@
 export const plugin = {
   id: 'trajectory',
-  label: 'Trajectory',
+  label: 'Provenance',
   order: 50,
   clientModule: '/plugins/trajectory.js',
-  description: 'Bind artifacts to authoritative DeepSeek Harness run/span identifiers without copying trace content.',
+  scope: 'file',
+  surface: 'right',
+  category: 'provenance',
+  requiresFile: true,
+  description: 'Links a file to the agent run and step that produced it. The harness session log stays the authority; only the identifiers are stored here.',
   async action({ action, payload, store }) {
     if (action === 'bind') {
       return store.bindTrace({

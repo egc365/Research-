@@ -42,6 +42,10 @@ export const plugin = {
   label: 'Preflight',
   order: 40,
   clientModule: '/plugins/preflight.js',
+  scope: 'workspace',
+  surface: 'right',
+  category: 'policy',
+  requiresWorkspace: true,
   description: 'Deterministic path protection and lint rules before file mutation.',
 
   async beforeWrite({ filePath, content, actor = 'human', store }) {
