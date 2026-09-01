@@ -9,8 +9,9 @@
 // contribution is wired into this station.
 export async function mount(el, ctx) {
   const labelsWired = () => ctx.wiring.some(row => row.contribution_id === 'label-editor');
-  el.innerHTML = `
-    <div class="card"><h3>Workspace</h3>
+  // In the sidebar the kernel already draws the section header — no card, no
+  // duplicate title, every pixel of width goes to the tree itself.
+  const inner = `
       <div class="tree-toolbar">
         <button data-role="new-file">＋ file</button>
         <button data-role="new-folder">＋ folder</button>
@@ -18,8 +19,10 @@ export async function mount(el, ctx) {
       </div>
       <div data-role="droproot" class="tree-droproot" title="Drop a dragged entry here to move it to the workspace root">workspace root</div>
       <div data-role="tree"></div>
-      <div data-role="menu-host"></div>
-    </div>`;
+      <div data-role="menu-host"></div>`;
+  el.innerHTML = ctx.station === 'sidebar'
+    ? inner
+    : `<div class="card"><h3>Workspace</h3>${inner}</div>`;
   const tree = el.querySelector('[data-role="tree"]');
   let labels = {};
   let favorites = [];
