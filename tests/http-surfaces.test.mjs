@@ -224,3 +224,16 @@ test('station definition is owner-surface only', async () => {
     assert.equal(made.status, 201);
   } finally { await f.close(); }
 });
+
+test('trash (delete) is owner-surface only', async () => {
+  const f = await fixture();
+  try {
+    const denied = await call(f.agentBase, 'POST', '/api/fs/delete', { rootPath: f.root, path: f.file });
+    assert.equal(denied.status, 403);
+    assert.ok(fs.existsSync(f.file));
+    const gone = await call(f.ownerBase, 'POST', '/api/fs/delete', { rootPath: f.root, path: f.file });
+    assert.equal(gone.status, 200);
+    const body = await gone.json();
+    assert.ok(!fs.existsSync(f.file) && fs.existsSync(body.path));
+  } finally { await f.close(); }
+});

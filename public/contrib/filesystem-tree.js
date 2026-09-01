@@ -135,6 +135,26 @@ export async function mount(el, ctx) {
         row.append(tag);
       }
 
+      const bin = document.createElement('button');
+      bin.className = 'tree-add';
+      bin.textContent = '🗑';
+      bin.title = `Move ${entry.name} to the workspace trash`;
+      bin.onclick = async event => {
+        event.stopPropagation();
+        if (!confirm(`Move '${entry.name}' to the trash?\nIt goes to .research-ops/trash inside the workspace — nothing is destroyed.`)) return;
+        try {
+          const gone = await ctx.request('/api/fs/delete', {
+            method: 'POST',
+            body: JSON.stringify({ rootPath: ctx.workspace.root_path, path: entry.path, actor: 'human' })
+          });
+          ctx.notify(`Trashed ${gone.kind}: ${entry.name} → .research-ops/trash`, 'ok');
+          ctx.bus.emit('fs-changed', { path: entry.path, kind: 'delete' });
+        } catch (error) {
+          ctx.notify(`${error.data?.error || 'ERROR'}: ${error.message}`, 'error');
+        }
+      };
+      row.append(bin);
+
       container.append(row);
       if (isDir) {
         const add = document.createElement('button');

@@ -80,6 +80,12 @@ async function api(req, res, url, { store, plugins, surface }) {
     const body = enforceSurfaceActor(surface, await readJson(req));
     return json(res, 200, store.moveEntry({ rootPath: body.rootPath, fromPath: body.from, toPath: body.to, actor: body.actor || 'human' }));
   }
+  if (req.method === 'POST' && url.pathname === '/api/fs/delete') {
+    // Trash is still a destructive gesture: owner surface only.
+    if (surface === 'agent') return json(res, 403, { error: 'OWNER_SURFACE_ONLY', message: 'Deleting (trashing) happens on the owner surface.' });
+    const body = await readJson(req);
+    return json(res, 200, store.deleteEntry({ rootPath: body.rootPath, filePath: body.path, actor: body.actor || 'human' }));
+  }
   if (req.method === 'GET' && url.pathname === '/api/labels') return json(res, 200, store.listLabels());
   if (req.method === 'POST' && url.pathname === '/api/labels') {
     // Designation is curation: the label schema is owner state.

@@ -87,3 +87,24 @@ test('moveEntry moves a folder with everything under it', t => {
   assert.deepEqual(store.pathLabels(ws)[path.join(ws, 'crate')].map(a => a.label), ['draft']);
   assert.throws(() => store.moveEntry({ rootPath: ws, fromPath: path.join(ws, 'crate'), toPath: path.join(ws, 'crate', 'inside') }), /into itself/);
 });
+
+test('deleteEntry trashes a folder: bytes preserved, rows follow, state archived', t => {
+  const { store, ws } = freshStore(t);
+  fs.mkdirSync(path.join(ws, 'demo'));
+  const doc = path.join(ws, 'demo', 'old.md');
+  store.writeFile({ rootPath: ws, filePath: doc, content: 'x\n', actor: 'human' });
+  store.defineLabel({ name: 'draft' });
+  store.assignLabel({ rootPath: ws, filePath: doc, label: 'draft' });
+  const gone = store.deleteEntry({ rootPath: ws, filePath: path.join(ws, 'demo'), actor: 'human' });
+  assert.equal(gone.trashed, true);
+  assert.ok(!fs.existsSync(path.join(ws, 'demo')));
+  assert.ok(fs.existsSync(gone.path)); // bytes live in .research-ops/trash
+  const inTrash = path.join(gone.path, 'old.md');
+  assert.ok(fs.existsSync(inTrash));
+  assert.equal(store.getArtifact(inTrash).state, 'archived');
+  assert.deepEqual(store.pathLabels(ws)[inTrash].map(a => a.label), ['draft']);
+  assert.equal(store.history(gone.path)[0].event_type, 'DELETE');
+  // the tree never lists the trash
+  assert.ok(!store.listDirectory(ws, '.').some(e => e.name === '.research-ops'));
+  assert.throws(() => store.deleteEntry({ rootPath: ws, filePath: ws }), /workspace root/);
+});

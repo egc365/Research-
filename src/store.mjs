@@ -584,6 +584,45 @@ export class ControlStore {
     return { path: to, from, moved: true, kind: isDir ? 'directory' : 'file' };
   }
 
+  // Governed delete = move to trash. The entry (file or folder, with
+  // everything under it) moves to <workspace>/.research-ops/trash/<stamp>-<name>,
+  // which the tree never lists. Registry rows follow the bytes and flip to
+  // 'archived'; labels and amendments follow too; a DELETE event names where
+  // it came from. Nothing is unlinked — the owner can pull it back from the
+  // trash folder by hand, and a rm of the trash dir is an explicit shell act.
+  deleteEntry({ rootPath, filePath, actor = 'human' }) {
+    const root = path.resolve(rootPath);
+    const target = this.assertInsideWorkspace(root, filePath);
+    if (target === root) throw new Error('Refusing to trash the workspace root itself');
+    if (!fs.existsSync(target)) throw new Error('No such file or folder: ' + target);
+    if (target.includes(`${path.sep}.research-ops${path.sep}`)) throw new Error('Already in the trash');
+    const isDir = fs.statSync(target).isDirectory();
+    const trashDir = path.join(root, '.research-ops', 'trash');
+    fs.mkdirSync(trashDir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const dest = path.join(trashDir, `${stamp}-${path.basename(target)}`);
+    fs.renameSync(target, dest);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const table of ['artifact_registry', 'path_labels', 'amendments', 'artifact_versions']) {
+        this.db.prepare(`UPDATE ${table} SET path=? WHERE path=?`).run(dest, target);
+        if (isDir) {
+          this.db.prepare(`UPDATE ${table} SET path=? || substr(path, length(?)+1) WHERE path LIKE ? || '/%'`)
+            .run(dest, target, target);
+        }
+      }
+      this.db.prepare("UPDATE artifact_registry SET state='archived', updated_at=? WHERE path=? OR path LIKE ? || '/%'")
+        .run(now(), dest, dest);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      fs.renameSync(dest, target);
+      throw error;
+    }
+    this.appendEvent({ filePath: dest, eventType: 'DELETE', actor, metadata: { from: target, kind: isDir ? 'directory' : 'file', trash: true } });
+    return { trashed: true, from: target, path: dest, kind: isDir ? 'directory' : 'file' };
+  }
+
   listLabels() {
     const counts = {};
     for (const row of this.db.prepare('SELECT label, COUNT(*) AS n FROM path_labels GROUP BY label').all()) {
