@@ -70,3 +70,21 @@ test('recentActivity returns last-touched artifacts, trash excluded', t => {
   const recent = store.recentActivity(ws, 10);
   assert.deepEqual(recent.map(r => r.path), [b]);
 });
+
+test('removeWorkspace unregisters everything but leaves the disk alone', t => {
+  const { store, ws } = freshStore(t);
+  const doc = path.join(ws, 'keep.md');
+  store.writeFile({ rootPath: ws, filePath: doc, content: 'x\n', actor: 'human' });
+  store.defineLabel({ name: 'draft' });
+  store.assignLabel({ rootPath: ws, filePath: doc, label: 'draft' });
+  store.setUiPreferences({ rootPath: ws, patch: { theme: 'dark' } });
+  store.sidebarSections(ws, ['filesystem-tree']);
+  const gone = store.removeWorkspace(ws);
+  assert.equal(gone.removed, ws);
+  assert.ok(fs.existsSync(doc)); // bytes untouched
+  assert.ok(!store.getWorkspace(ws));
+  assert.ok(!store.getArtifact(doc));
+  assert.deepEqual(store.uiPreferences(ws), {});
+  assert.deepEqual(store.pathLabels(ws), {});
+  assert.throws(() => store.removeWorkspace(ws), /not registered/);
+});

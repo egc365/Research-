@@ -49,6 +49,11 @@ async function api(req, res, url, { store, plugins, surface }) {
     const body = await readJson(req);
     return json(res, 201, store.createWorkspace({ rootPath: body.rootPath, label: body.label, create: body.create === true }));
   }
+  if (req.method === 'POST' && url.pathname === '/api/workspaces/remove') {
+    if (surface === 'agent') return json(res, 403, { error: 'OWNER_SURFACE_ONLY', message: 'Workspaces are removed on the owner surface.' });
+    const body = await readJson(req);
+    return json(res, 200, store.removeWorkspace(body.rootPath));
+  }
   if (req.method === 'GET' && url.pathname === '/api/tree') {
     const rootPath = url.searchParams.get('root');
     const relativePath = url.searchParams.get('path') || '.';

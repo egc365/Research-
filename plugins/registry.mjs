@@ -83,6 +83,7 @@ export const contributions = [
   { id: 'statistics-view',    label: 'Statistics',         entry: '/contrib/statistics-view.js',    description: 'Counts by state, event type, actor, and the last promotions.' },
   { id: 'launchpad',          label: 'Launchpad',          entry: '/contrib/launchpad.js',          description: 'Dashboard link hub: stations, workspaces, and the machine’s other programs as big cards. Per-workspace extra links come from the workspace preferences.' },
   { id: 'inbox',              label: 'Inbox',              entry: '/contrib/inbox.js',              description: 'What needs the owner: candidates and validated artifacts awaiting a verdict, plus the latest activity.' },
+  { id: 'folder-cards',       label: 'Folder cards',       entry: '/contrib/folder-cards.js',       description: 'Notion-style card view of a folder (the workspace root by default): one card per file or folder, with label chips.' },
   { id: 'section-favorites',  label: 'Favorites',          entry: '/contrib/section-favorites.js',  description: 'Sidebar section: starred files and folders (star them in the tree).' },
   { id: 'section-projects',   label: 'Projects',           entry: '/contrib/section-projects.js',   description: 'Sidebar section: folders labeled ‘project’, nested, click to reveal in Files.' },
   { id: 'section-recent',     label: 'Recent',             entry: '/contrib/section-recent.js',     description: 'Sidebar section: last touched artifacts from the ledger.' },
@@ -114,7 +115,7 @@ export const defaultWiring = {
       'promotion-control'
     ]
   },
-  'dashboard-viewer': { main: ['launchpad', 'inbox', 'statistics-view'] },
+  'dashboard-viewer': { main: ['launchpad', 'folder-cards', 'inbox', 'statistics-view'] },
   'provenance-viewer': {
     main: ['revision-timeline'],
     side: ['actor-filter', 'provenance-block']

@@ -421,6 +421,14 @@ async function loadWorkspaces(selectPath = null) {
     option.textContent = ws.label || ws.root_path;
     workspaceSelect.append(option);
   }
+  // A contribution (the launchpad) may ask the kernel to switch workspaces.
+  if (!kernel._switchHooked) {
+    kernel._switchHooked = true;
+    bus.on('switch-workspace', ({ root }) => {
+      if (navigationBlocked()) return;
+      loadWorkspaces(root).catch(showError);
+    });
+  }
   const wanted = selectPath || kernel.workspace?.root_path || uiMemory.read().workspace || kernel.workspaces[0]?.root_path;
   kernel.workspace = kernel.workspaces.find(ws => ws.root_path === wanted) || kernel.workspaces[0] || null;
   if (kernel.workspace) {
@@ -592,12 +600,48 @@ function renderCustomize(tab = 'appearance') {
   const p = mergedPrefs();
   customizeBody.innerHTML = `
     <div class="dual-tabs" data-role="tabs">
-      ${['appearance', 'sidebar', 'dashboard', 'plugins'].map(t =>
+      ${['workspace', 'appearance', 'sidebar', 'dashboard', 'plugins'].map(t =>
         `<button data-tab="${t}" class="${t === tab ? 'active' : ''}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}
     </div>
     <div data-role="pane"></div>`;
   customizeBody.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => renderCustomize(b.dataset.tab));
   const pane = customizeBody.querySelector('[data-role="pane"]');
+
+  if (tab === 'workspace') {
+    pane.innerHTML = `
+      <div class="ws-form">
+        <label>Name <input data-role="ws-label" value="${esc(kernel.workspace.label || '')}"></label>
+        <label>Icon (emoji, shown in the switcher) <input data-role="ws-icon" value="${esc(p.icon || '')}" maxlength="4" style="width:70px"></label>
+        <div class="muted mono" style="word-break:break-all">${esc(kernel.workspace.root_path)}</div>
+        <div class="ws-actions" style="gap:6px">
+          <button data-role="ws-remove" class="danger">Remove workspace…</button>
+          <button data-role="ws-save" class="primary">Save</button>
+        </div>
+        <div class="muted">Removing unregisters the workspace here — its folder and files stay on disk exactly as they are.</div>
+      </div>`;
+    pane.querySelector('[data-role="ws-save"]').onclick = async () => {
+      try {
+        const label = pane.querySelector('[data-role="ws-label"]').value.trim() || null;
+        await request('/api/workspaces', { method: 'POST', body: JSON.stringify({ rootPath: kernel.workspace.root_path, label }) });
+        const icon = pane.querySelector('[data-role="ws-icon"]').value.trim();
+        await savePrefs({ icon });
+        notify('Workspace updated.', 'ok');
+        await loadWorkspaces(kernel.workspace.root_path);
+        renderCustomize('workspace');
+      } catch (error) { showError(error); }
+    };
+    pane.querySelector('[data-role="ws-remove"]').onclick = async () => {
+      const name = kernel.workspace.label || kernel.workspace.root_path;
+      if (!confirm(`Remove workspace '${name}' from Research Operations?\nThe folder and its files stay on disk untouched.`)) return;
+      try {
+        await request('/api/workspaces/remove', { method: 'POST', body: JSON.stringify({ rootPath: kernel.workspace.root_path }) });
+        customizeDialog.close();
+        notify(`Removed workspace '${name}'. Its folder is untouched.`, 'ok');
+        kernel.workspace = null;
+        await loadWorkspaces();
+      } catch (error) { showError(error); }
+    };
+  }
 
   if (tab === 'appearance') {
     pane.innerHTML = `

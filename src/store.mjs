@@ -60,6 +60,24 @@ export class ControlStore {
     }
   }
 
+  // Unregister a workspace: its registry rows, composition, preferences,
+  // sidebar layout and label designations go; the folder and its bytes stay
+  // on disk untouched, and the event ledger keeps its history.
+  removeWorkspace(rootPath) {
+    const root = path.resolve(rootPath);
+    if (!this.getWorkspace(root)) throw new Error('Workspace is not registered: ' + root);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare('DELETE FROM workspace_plugins WHERE workspace_root=?').run(root);
+      this.db.prepare('DELETE FROM workspace_ui_preferences WHERE workspace_root=?').run(root);
+      this.db.prepare('DELETE FROM sidebar_sections WHERE workspace_root=?').run(root);
+      this.db.prepare('DELETE FROM path_labels WHERE workspace_root=?').run(root);
+      this.db.prepare('DELETE FROM workspace_roots WHERE root_path=?').run(root); // cascades artifact_registry
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    return { removed: root, note: 'The folder and its files are untouched on disk.' };
+  }
+
   listWorkspaces() {
     return this.db.prepare('SELECT * FROM workspace_roots ORDER BY label, root_path').all();
   }

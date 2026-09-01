@@ -62,7 +62,7 @@ test('owner wiring edits survive a reseed', t => {
   const { store } = freshStore(t);
   store.syncCatalog(catalogRows([]));
   store.seedStationWiring(defaultWiring);
-  for (const id of ['launchpad', 'inbox', 'statistics-view']) {
+  for (const id of ['launchpad', 'folder-cards', 'inbox', 'statistics-view']) {
     store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: id, remove: true });
   }
   store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'candidate-list', sortOrder: 10 });
