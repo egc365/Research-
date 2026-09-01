@@ -727,3 +727,48 @@ Services: revision · governance · registry · diff · history · preflight
 
 After the owner answers artifact 8, this document is the frozen V1 contract;
 implementation proceeds strictly from artifact 6.
+
+---
+
+# ADDENDUM 2026-09-01 — NOTION-STYLE WORKSPACE FLOW + APPEARANCE (owner spec)
+
+Decided and building in this sequence; supersedes conflicting lines above.
+
+- **Shell**: the kernel owns a collapsible, drag-resizable left sidebar; its
+  content is plugin sections from `sidebar_sections` rows (visible /
+  collapsed / ordered per workspace; headless sections carry dialogs). The
+  workspace switcher lives in the sidebar head. Station rails are retired —
+  navigation is the sidebar; stations are main+side.
+- **Three configs, kept separate**: composition = what a workspace can do
+  (`workspace_plugins` + wiring); appearance = what it looks like
+  (`workspace_ui_preferences` / `user_ui_preferences`, validated JSON, tokens
+  only); navigation = how it is organized (`sidebar_sections`, favorites,
+  manual order in preferences). Plugin enable/disable is independent of
+  appearance (acceptance 11).
+- **Design tokens**: one `:root` layer (background, surface, surface-alt,
+  border, text, muted-text, accent, success, warning, danger, spacing,
+  radius, font-size, editor-font-size + derived tints). Light theme is a
+  token override; density/radius/accent/font prefs retune tokens. Plugins
+  never ship their own themes.
+- **Sidebar sections shipped**: Favorites (starred paths in preferences),
+  Projects (folders labeled `project`), Files (the same filesystem-tree
+  contribution), Recent (ledger), Trash (with restore), label-editor
+  (headless). All are catalog contributions; show/hide/reorder in Customize.
+- **Manual ordering**: per-directory name order in preferences key `order`;
+  never forced back to alphabetical once the owner has ordered a folder.
+  Same-parent drag = reorder; cross-parent drag = move (unchanged).
+- **Dashboard = link hub**: launchpad (stations, workspaces, machine
+  programs :7860/:7861/:7870/:8860/:8880 + per-workspace links), folder
+  cards (Notion-style card view of the root or a configured folder), inbox
+  (candidates/validated awaiting the owner + recent), statistics. All
+  wiring; per-workspace content comes from per-workspace data, and any
+  workspace can define its own dashboard as a custom station.
+- **Workspace management**: rename + emoji icon + **Remove workspace** in
+  Customize → Workspace (unregisters everything in one transaction; the
+  folder and files stay on disk). Trash restore ships (rows and labels come
+  back; lifecycle state re-earned as `working`).
+- **Customize workspace** dialog: Workspace / Appearance (live preview,
+  user-scope apply-everywhere, reset) / Sidebar / Dashboard / Plugins.
+- **Mini-plugins stay mini** (owner): fine-grained contributions are the
+  point — dual-document-view, diff-renderer etc. remain separately
+  toggleable behaviors; nothing gets merged into monoliths.
