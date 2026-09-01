@@ -184,3 +184,33 @@ test('label writes are owner-only; mkdir works on both surfaces with the actor s
     assert.equal(event.actor, 'agent'); // the claim was overridden at the boundary
   } finally { await f.close(); }
 });
+
+test('moves are governed on both surfaces with the actor stamped', async () => {
+  const f = await fixture();
+  try {
+    fs.mkdirSync(path.join(f.root, 'shelf'));
+    const to = path.join(f.root, 'shelf', 'test.md');
+    const moved = await call(f.agentBase, 'POST', '/api/fs/move', { rootPath: f.root, from: f.file, to, actor: 'human' });
+    assert.equal(moved.status, 200);
+    const event = f.store.history(to).find(e => e.event_type === 'MOVE');
+    assert.equal(event.actor, 'agent'); // the surface overrides the claimed identity
+    const escape = await call(f.ownerBase, 'POST', '/api/fs/move', { rootPath: f.root, from: to, to: '/etc/escape' });
+    assert.equal(escape.status, 400);
+  } finally { await f.close(); }
+});
+
+test('workspace creation with create:true builds the folder, owner surface only', async () => {
+  const f = await fixture();
+  try {
+    const fresh = path.join(f.root, '..', 'made-by-ui');
+    const denied = await call(f.agentBase, 'POST', '/api/workspaces', { rootPath: fresh, create: true });
+    assert.equal(denied.status, 403);
+    assert.ok(!fs.existsSync(fresh));
+    const made = await call(f.ownerBase, 'POST', '/api/workspaces', { rootPath: fresh, label: 'made', create: true });
+    assert.equal(made.status, 201);
+    assert.ok(fs.statSync(fresh).isDirectory());
+    // fresh workspace = bare composition profile
+    const composition = await (await fetch(`${f.ownerBase}/api/composition?root=${encodeURIComponent(fresh)}`)).json();
+    assert.deepEqual(composition.enabled, []);
+  } finally { await f.close(); }
+});

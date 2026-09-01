@@ -125,3 +125,21 @@ button:disabled { opacity: .45; cursor: default; }
 .tree-row:hover .tree-add { visibility: visible; }
 .label-chip { display: inline-block; border: 1px solid; border-radius: 999px;
   padding: 0 8px; font-size: .78em; vertical-align: middle; }
+
+/* --- workspace dialog, tree create menu, drag targets, label dialog --- */
+.ws-form { display: flex; flex-direction: column; gap: 10px; padding: 4px 2px; }
+.ws-form label { display: flex; flex-direction: column; gap: 4px; font-size: .9em; }
+.ws-form label.ws-check { flex-direction: row; align-items: center; gap: 8px; }
+.ws-form input[type="text"], .ws-form input:not([type]) { padding: 6px 8px; }
+.ws-actions { display: flex; justify-content: flex-end; }
+.tree-menu { border: 1px solid var(--border, #333); border-radius: 6px; padding: 8px;
+  margin: 4px 0 4px 14px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+  background: var(--panel, #16181d); }
+.tree-droproot { border: 1px dashed var(--border, #333); border-radius: 6px; padding: 2px 8px;
+  font-size: .8em; opacity: .7; margin-bottom: 6px; }
+.drop-target { outline: 2px dashed #4fa3ff; outline-offset: -2px; }
+.label-dialog { min-width: 560px; max-width: 720px; }
+.label-row { display: grid; grid-template-columns: auto auto 1fr 42px auto auto;
+  gap: 6px; align-items: center; margin-bottom: 6px; }
+.label-row input[data-edit="desc"] { min-width: 0; padding: 3px 6px; font-size: .85em; }
+.label-new { display: grid; grid-template-columns: 1fr 42px 1fr auto; gap: 6px; margin-top: 8px; }

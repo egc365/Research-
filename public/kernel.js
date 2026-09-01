@@ -10,6 +10,15 @@ const workspaceSelect = $('workspaceSelect');
 const statusBar = $('statusBar');
 const pluginManager = $('pluginManager');
 const pluginManagerBody = $('pluginManagerBody');
+const workspaceDialog = $('workspaceDialog');
+
+// Small persisted UI memory (localStorage): last workspace, and per-workspace
+// the active station and selected file. Purely convenience — the SQLite
+// crosswalk stays the only authority on composition.
+const uiMemory = {
+  read() { try { return JSON.parse(localStorage.getItem('ro.ui') || '{}'); } catch { return {}; } },
+  patch(fn) { try { const s = this.read(); fn(s); localStorage.setItem('ro.ui', JSON.stringify(s)); } catch { /* storage may be unavailable */ } }
+};
 
 const kernel = {
   workspaces: [],
@@ -66,6 +75,7 @@ async function selectFile(path) {
   const record = await request(`/api/file?root=${encodeURIComponent(kernel.workspace.root_path)}&path=${encodeURIComponent(path)}`);
   kernel.selection = record;
   kernel.card = null;
+  uiMemory.patch(s => { (s.selection ??= {})[kernel.workspace.root_path] = record.path; });
   bus.emit('selection', record);
   notify(`Loaded ${path.split('/').pop()} · sha256 ${record.checksum.slice(0, 12)}…`);
   return record;
@@ -113,6 +123,11 @@ function makeContext(stationId, config) {
       on(event, fn) { const off = bus.on(event, fn); offs.push(off); return off; },
       emit: bus.emit
     },
+    // The wiring rows of the station this contribution is mounted in — lets a
+    // contribution offer an action only when its handler is actually composed
+    // (e.g. the tree shows "Labels…" only when label-editor is wired here).
+    get wiring() { return kernel.composition.stations[stationId] || []; },
+    activateStation,
     selectFile, refreshSelection, saveFile,
     notify, esc,
     onDirty(guard) { kernel.dirtyGuards.push(guard); }
@@ -165,11 +180,11 @@ function renderEmptyFrame() {
        <div>No views loaded</div>
        <button id="emptyAddPlugin" class="primary">+ Add plugin</button>`
     : `<div class="ws-name">No workspace</div>
-       <div>Register an absolute folder path to begin.</div>
-       <button id="emptyAddWorkspace" class="primary">+ Add path</button>`;
+       <div>A workspace is a folder plus its own set of plugins.</div>
+       <button id="emptyAddWorkspace" class="primary">＋ Workspace</button>`;
   stage.append(frame);
   frame.querySelector('#emptyAddPlugin')?.addEventListener('click', openPluginManager);
-  frame.querySelector('#emptyAddWorkspace')?.addEventListener('click', addWorkspace);
+  frame.querySelector('#emptyAddWorkspace')?.addEventListener('click', openWorkspaceDialog);
 }
 
 async function loadModule(row) {
@@ -183,6 +198,7 @@ async function activateStation(stationId) {
   if (navigationBlocked()) return;
   disposeMounts();
   kernel.activeStation = stationId;
+  if (kernel.workspace) uiMemory.patch(s => { (s.station ??= {})[kernel.workspace.root_path] = stationId; });
   renderStationBar();
   const station = enabledStations().find(row => row.plugin_id === stationId);
   if (!station) return renderEmptyFrame();
@@ -227,8 +243,10 @@ async function recompose(keepStation = true) {
     renderStationBar();
     return renderEmptyFrame();
   }
+  const remembered = kernel.workspace ? uiMemory.read().station?.[kernel.workspace.root_path] : null;
   const target = keepStation && available.some(row => row.plugin_id === kernel.activeStation)
     ? kernel.activeStation
+    : available.some(row => row.plugin_id === remembered) ? remembered
     : available[0].plugin_id;
   await activateStation(target);
 }
@@ -244,20 +262,38 @@ async function loadWorkspaces(selectPath = null) {
     option.textContent = ws.label || ws.root_path;
     workspaceSelect.append(option);
   }
-  const wanted = selectPath || kernel.workspace?.root_path || kernel.workspaces[0]?.root_path;
-  kernel.workspace = kernel.workspaces.find(ws => ws.root_path === wanted) || null;
-  if (kernel.workspace) workspaceSelect.value = kernel.workspace.root_path;
+  const wanted = selectPath || kernel.workspace?.root_path || uiMemory.read().workspace || kernel.workspaces[0]?.root_path;
+  kernel.workspace = kernel.workspaces.find(ws => ws.root_path === wanted) || kernel.workspaces[0] || null;
+  if (kernel.workspace) {
+    workspaceSelect.value = kernel.workspace.root_path;
+    uiMemory.patch(s => { s.workspace = kernel.workspace.root_path; });
+  }
   kernel.selection = null;
   kernel.card = null;
   bus.emit('workspace', kernel.workspace);
   await recompose(false);
+  const rememberedFile = kernel.workspace ? uiMemory.read().selection?.[kernel.workspace.root_path] : null;
+  if (rememberedFile) await selectFile(rememberedFile).catch(() => { /* the file may be gone; stay silent */ });
 }
 
-async function addWorkspace() {
-  const rootPath = prompt('Absolute folder path to add:');
-  if (!rootPath) return;
+function openWorkspaceDialog() {
+  $('wsName').value = '';
+  $('wsPath').value = '';
+  $('wsCreate').checked = true;
+  workspaceDialog.showModal();
+}
+
+async function createWorkspace(event) {
+  event.preventDefault();
+  const rootPath = $('wsPath').value.trim();
+  if (!rootPath.startsWith('/')) return notify('The folder path must be absolute (start with /).', 'error');
   try {
-    const ws = await request('/api/workspaces', { method: 'POST', body: JSON.stringify({ rootPath }) });
+    const ws = await request('/api/workspaces', {
+      method: 'POST',
+      body: JSON.stringify({ rootPath, label: $('wsName').value.trim() || null, create: $('wsCreate').checked })
+    });
+    workspaceDialog.close();
+    notify(`Workspace ready: ${ws.label || ws.root_path}. Enable stations in Plugins ⚙.`, 'ok');
     await loadWorkspaces(ws.root_path);
   } catch (error) { showError(error); }
 }
@@ -361,7 +397,9 @@ function showError(error) {
 
 $('openPluginManager').onclick = openPluginManager;
 $('closePluginManager').onclick = () => pluginManager.close();
-$('addWorkspace').onclick = addWorkspace;
+$('newWorkspace').onclick = openWorkspaceDialog;
+$('closeWorkspaceDialog').onclick = () => workspaceDialog.close();
+$('workspaceForm').addEventListener('submit', createWorkspace);
 workspaceSelect.onchange = async () => {
   if (navigationBlocked()) { workspaceSelect.value = kernel.workspace?.root_path || ''; return; }
   kernel.workspace = kernel.workspaces.find(ws => ws.root_path === workspaceSelect.value) || null;

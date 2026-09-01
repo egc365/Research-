@@ -14,7 +14,7 @@
     <div class="brand">Research Operations</div>
     <div class="kernel-controls">
       <select id="workspaceSelect" aria-label="Workspace"></select>
-      <button id="addWorkspace" title="Register an absolute folder path">Add path</button>
+      <button id="newWorkspace" class="primary" title="Create a workspace — a composition profile over a folder">＋ Workspace</button>
       <nav id="stationBar" class="station-bar" aria-label="Stations"></nav>
       <button id="openPluginManager" class="plugins-btn">Plugins ⚙</button>
     </div>
@@ -30,6 +30,17 @@
       <button id="closePluginManager">Close</button>
     </div>
     <div id="pluginManagerBody" class="pm-body"></div>
+  </dialog>
+
+  <dialog id="workspaceDialog" class="plugin-manager">
+    <div class="pm-head"><strong>New workspace</strong><button id="closeWorkspaceDialog" type="button">Close</button></div>
+    <form id="workspaceForm" method="dialog" class="ws-form">
+      <label>Name <input id="wsName" placeholder="e.g. field notes" autocomplete="off"></label>
+      <label>Folder path <input id="wsPath" class="mono" placeholder="/absolute/path/to/folder" required autocomplete="off"></label>
+      <label class="ws-check"><input id="wsCreate" type="checkbox" checked> Create the folder if it does not exist</label>
+      <div class="muted">A workspace is a composition profile: it starts empty, with no stations enabled. Uncheck the box to register an existing folder as-is.</div>
+      <div class="ws-actions"><button class="primary" value="ok">Create workspace</button></div>
+    </form>
   </dialog>
 
   <script type="module" src="/kernel.js"></script>

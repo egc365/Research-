@@ -47,7 +47,7 @@ async function api(req, res, url, { store, plugins, surface }) {
   if (req.method === 'POST' && url.pathname === '/api/workspaces') {
     if (surface === 'agent') return json(res, 403, { error: 'OWNER_SURFACE_ONLY', message: 'Workspace registration happens on the owner surface.' });
     const body = await readJson(req);
-    return json(res, 201, store.addWorkspace(body.rootPath, body.label));
+    return json(res, 201, store.createWorkspace({ rootPath: body.rootPath, label: body.label, create: body.create === true }));
   }
   if (req.method === 'GET' && url.pathname === '/api/tree') {
     const rootPath = url.searchParams.get('root');
@@ -76,12 +76,17 @@ async function api(req, res, url, { store, plugins, surface }) {
     const body = enforceSurfaceActor(surface, await readJson(req));
     return json(res, 201, store.createDirectory({ rootPath: body.rootPath, dirPath: body.path, actor: body.actor || 'human' }));
   }
+  if (req.method === 'POST' && url.pathname === '/api/fs/move') {
+    const body = enforceSurfaceActor(surface, await readJson(req));
+    return json(res, 200, store.moveEntry({ rootPath: body.rootPath, fromPath: body.from, toPath: body.to, actor: body.actor || 'human' }));
+  }
   if (req.method === 'GET' && url.pathname === '/api/labels') return json(res, 200, store.listLabels());
   if (req.method === 'POST' && url.pathname === '/api/labels') {
     // Designation is curation: the label schema is owner state.
     if (surface === 'agent') return json(res, 403, { error: 'OWNER_SURFACE_ONLY', message: 'The label schema is managed on the owner surface.' });
     const body = await readJson(req);
     if (body.remove === true) return json(res, 200, store.deleteLabel(body.name));
+    if (body.rename) return json(res, 200, store.renameLabel({ name: body.name, newName: body.rename }));
     return json(res, 200, store.defineLabel({ name: body.name, color: body.color, description: body.description }));
   }
   if (req.method === 'GET' && url.pathname === '/api/path-labels') {

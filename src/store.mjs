@@ -37,6 +37,29 @@ export class ControlStore {
     return this.getWorkspace(resolved);
   }
 
+  // A workspace is a composition profile over a real directory. `create` lets
+  // the owner start from a brand-new folder; a fresh workspace has no rows in
+  // workspace_plugins, so it renders the empty frame until stations are enabled.
+  createWorkspace({ rootPath, label = null, create = false }) {
+    const resolved = path.resolve(rootPath);
+    if (!fs.existsSync(resolved)) {
+      if (!create) throw new Error(`No directory at ${resolved} — pass create to make one`);
+      fs.mkdirSync(resolved, { recursive: true });
+    }
+    return this.addWorkspace(resolved, label);
+  }
+
+  // Retire plugin ids the catalog no longer ships: their rows leave all three
+  // composition tables so the plugin manager shows no ghosts. Content tables
+  // (labels, amendments, ledger) are untouched.
+  retirePlugins(ids = []) {
+    for (const id of ids) {
+      this.db.prepare('DELETE FROM station_contributions WHERE station_id=? OR contribution_id=?').run(id, id);
+      this.db.prepare('DELETE FROM workspace_plugins WHERE plugin_id=?').run(id);
+      this.db.prepare('DELETE FROM ui_plugins WHERE plugin_id=?').run(id);
+    }
+  }
+
   listWorkspaces() {
     return this.db.prepare('SELECT * FROM workspace_roots ORDER BY label, root_path').all();
   }
@@ -502,6 +525,39 @@ export class ControlStore {
     return { path: target, created: true };
   }
 
+  // Governed move for the tree's drag-and-drop: renames on disk, then carries
+  // every path-keyed row (registry, labels, amendments, frozen versions) to the
+  // new path so identity and history follow the file. Directories move with
+  // everything under them. A MOVE event lands at the new path naming the old.
+  moveEntry({ rootPath, fromPath, toPath, actor = 'human' }) {
+    const from = this.assertInsideWorkspace(rootPath, fromPath);
+    const to = this.assertInsideWorkspace(rootPath, toPath);
+    if (from === to) return { path: to, moved: false };
+    if (!fs.existsSync(from)) throw new Error('No such file or folder: ' + from);
+    if (fs.existsSync(to)) throw new Error('Already exists: ' + to);
+    if ((to + '/').startsWith(from + '/')) throw new Error('Cannot move a folder into itself');
+    const isDir = fs.statSync(from).isDirectory();
+    fs.renameSync(from, to);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const tables = ['artifact_registry', 'path_labels', 'amendments', 'artifact_versions'];
+      for (const table of tables) {
+        this.db.prepare(`UPDATE ${table} SET path=? WHERE path=?`).run(to, from);
+        if (isDir) {
+          this.db.prepare(`UPDATE ${table} SET path=? || substr(path, length(?)+1) WHERE path LIKE ? || '/%'`)
+            .run(to, from, from);
+        }
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      fs.renameSync(to, from); // put the bytes back rather than leave disk and registry split
+      throw error;
+    }
+    this.appendEvent({ filePath: to, eventType: 'MOVE', actor, metadata: { from, kind: isDir ? 'directory' : 'file' } });
+    return { path: to, from, moved: true, kind: isDir ? 'directory' : 'file' };
+  }
+
   listLabels() {
     const counts = {};
     for (const row of this.db.prepare('SELECT label, COUNT(*) AS n FROM path_labels GROUP BY label').all()) {
@@ -518,6 +574,22 @@ export class ControlStore {
       ON CONFLICT(name) DO UPDATE SET color=excluded.color, description=excluded.description
     `).run(name, color, description, now());
     return this.db.prepare('SELECT * FROM labels WHERE name=?').get(name);
+  }
+
+  renameLabel({ name, newName }) {
+    if (!newName || !/^[a-z0-9][a-z0-9 ._-]*$/i.test(newName)) throw new Error('Label names: letters, digits, space, dot, dash, underscore');
+    const existing = this.db.prepare('SELECT * FROM labels WHERE name=?').get(name);
+    if (!existing) throw new Error('Unknown label: ' + name);
+    if (this.db.prepare('SELECT name FROM labels WHERE name=?').get(newName)) throw new Error('A label named ' + newName + ' already exists');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare('INSERT INTO labels(name,color,description,created_at) VALUES(?,?,?,?)')
+        .run(newName, existing.color, existing.description, existing.created_at);
+      this.db.prepare('UPDATE path_labels SET label=? WHERE label=?').run(newName, name);
+      this.db.prepare('DELETE FROM labels WHERE name=?').run(name);
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    return this.db.prepare('SELECT * FROM labels WHERE name=?').get(newName);
   }
 
   deleteLabel(name) {
