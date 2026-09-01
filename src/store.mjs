@@ -908,6 +908,37 @@ export class ControlStore {
     return { restored: true, from: source, path: target, kind: isDir ? 'directory' : 'file' };
   }
 
+  // Permanent deletion: only entries already in the trash can be purged. Bytes
+  // are unlinked and every path-keyed row goes with them; the event ledger is
+  // the one thing that keeps the purge on record.
+  purgeTrashEntry({ rootPath, trashPath, actor = 'human' }) {
+    const root = path.resolve(rootPath);
+    const source = this.assertInsideWorkspace(root, trashPath);
+    if (!source.startsWith(path.join(root, '.research-ops', 'trash') + path.sep)) throw new Error('Not a trash entry: ' + source);
+    if (!fs.existsSync(source)) throw new Error('No such trash entry: ' + source);
+    const isDir = fs.statSync(source).isDirectory();
+    fs.rmSync(source, { recursive: true, force: true });
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const table of ['artifact_registry', 'path_labels', 'amendments', 'artifact_versions']) {
+        this.db.prepare(`DELETE FROM ${table} WHERE path=?`).run(source);
+        if (isDir) this.db.prepare(`DELETE FROM ${table} WHERE path LIKE ? || '/%'`).run(source);
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    this.appendEvent({ filePath: source, eventType: 'PURGE', actor, metadata: { permanent: true, kind: isDir ? 'directory' : 'file' } });
+    return { purged: true, path: source };
+  }
+
+  emptyTrash({ rootPath, actor = 'human' }) {
+    const entries = this.listTrash(rootPath);
+    for (const entry of entries) this.purgeTrashEntry({ rootPath, trashPath: entry.path, actor });
+    return { purged: entries.length };
+  }
+
   recentActivity(rootPath, limit = 12) {
     return this.db.prepare(`
       SELECT e.path, MAX(e.event_id) AS last_event, e.event_type, e.actor, e.created_at

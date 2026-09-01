@@ -92,11 +92,18 @@ export function mount(el, ctx) {
         <input data-edit="color" type="color" value="${ctx.esc(label.color)}" title="Color — saved on change">
         <button data-edit="rename" title="Rename this label everywhere">rename</button>
         <button data-edit="delete" class="danger" title="Delete this label everywhere">✕</button>`;
+      // Update the row in place: a full repaint here would rebuild the dialog
+      // body and destroy focus while tabbing between fields.
       const save = () => write('/api/labels', {
         name: label.name,
         color: row.querySelector('[data-edit="color"]').value,
         description: row.querySelector('[data-edit="desc"]').value || null
-      }).then(paint);
+      }).then(result => {
+        if (!result) return;
+        const color = row.querySelector('[data-edit="color"]').value;
+        const chip = row.querySelector('.label-chip');
+        chip.style.borderColor = color; chip.style.color = color;
+      });
       row.querySelector('[data-edit="desc"]').onchange = save;
       row.querySelector('[data-edit="color"]').onchange = save;
       row.querySelector('[data-edit="rename"]').onclick = async () => {

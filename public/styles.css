@@ -77,8 +77,17 @@ button:disabled { opacity: .45; cursor: default; }
 .stage { flex: 1; min-height: 0; display: grid; gap: 1px; background: var(--line); }
 .stage.layout-main { grid-template-columns: 1fr; }
 .stage.layout-rail-main { grid-template-columns: 280px 1fr; }
-.stage.layout-main-side { grid-template-columns: 1fr 340px; }
-.stage.layout-rail-main-side { grid-template-columns: 280px 1fr 340px; }
+/* main-side layouts carry a 4px drag divider column between main and side;
+   without a stored paneSplit the side keeps its fixed width, with one the
+   grid follows the --pane-split percentage (20..80, set by the kernel). */
+.stage.layout-main-side { grid-template-columns: minmax(0, 1fr) 4px 340px; }
+.stage.layout-rail-main-side { grid-template-columns: 280px minmax(0, 1fr) 4px 340px; }
+.stage.layout-main-side.has-split {
+  grid-template-columns: calc(var(--pane-split, 66) * 1%) 4px minmax(0, 1fr); }
+.stage.layout-rail-main-side.has-split {
+  grid-template-columns: 280px calc((100% - 280px) * var(--pane-split, 66) / 100) 4px minmax(0, 1fr); }
+.pane-resizer { background: var(--line); cursor: col-resize; }
+.pane-resizer:hover, .pane-resizer.dragging { background: var(--accent); }
 .slot { background: var(--background); overflow: auto; padding: var(--spacing); min-width: 0; }
 .slot > section + section { margin-top: var(--spacing); }
 
@@ -204,6 +213,11 @@ button:disabled { opacity: .45; cursor: default; }
 .blk.chg { border-color: var(--warn); background: var(--tint-warning); }
 .blk.gap { opacity: .25; }
 .blk.from { outline: 2px solid var(--accent); outline-offset: -2px; }
+.pane-label .pane-actions { display: inline-flex; gap: 6px; align-items: center; }
+.pane-label button { padding: 1px 8px; font-size: .9em; text-transform: none; letter-spacing: normal; }
+.working-edit { width: 100%; min-height: 60vh; resize: vertical;
+  font-family: ui-monospace, monospace; font-size: var(--editor-font-size);
+  line-height: 1.5; padding: 10px; }
 .blk pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere;
   background: var(--surface-alt); padding: 6px 8px; border-radius: 4px; }
 .blk table { border-collapse: collapse; font-size: .9em; }

@@ -69,6 +69,13 @@ export const stations = [
     }
   },
   {
+    id: 'planning-board', label: 'Board', version: '1.0.0',
+    manifest: {
+      description: 'Groups and subgroups of cards that are real files, links and notes — horizontal for hierarchy, vertical for serial order; drill in, drag to arrange. Card workshop unwound.',
+      layout: 'main', slots: ['main'], icon: '🗂'
+    }
+  },
+  {
     id: 'project-creator', label: 'Project creator', version: '1.0.0',
     manifest: {
       description: 'Start a new project folder inside the workspace with a seeded README, registered in the ledger from its first byte.',
@@ -104,7 +111,8 @@ export const contributions = [
   { id: 'section-trash',      label: 'Trash',              entry: '/contrib/section-trash.js',      description: 'Sidebar section: trashed entries with one-click restore.' },
   { id: 'execution-state-view', label: 'Execution state',  entry: '/contrib/execution-state-view.js', description: 'Inspect and patch a run’s structured state with optimistic version checks.' },
   { id: 'tool-health-view',   label: 'Tool health',        entry: '/contrib/tool-health.js',        description: 'Port health board: probes the machine’s tools via the tool-health service and shows up/down with latency. Extra targets via wiring config { targets: [...] }.' },
-  { id: 'transcript-search-view', label: 'Transcript search', entry: '/contrib/transcript-search.js', description: 'Bot cutover → session list → filtered deep search over native transcripts, via the transcript-search service.' }
+  { id: 'transcript-search-view', label: 'Transcript search', entry: '/contrib/transcript-search.js', description: 'Bot cutover → session list → filtered deep search over native transcripts, via the transcript-search service.' },
+  { id: 'board-view',         label: 'Board',              entry: '/contrib/board-view.js',         description: 'Planning board over the workspace: group tiles laid out per orientation, breadcrumb drill-in, drag cards to reorder or move; file cards select the file, links open, notes edit inline.' }
 ];
 
 // Default wiring, applied only when a station has zero rows in
@@ -139,6 +147,7 @@ export const defaultWiring = {
   'execution-state': { main: ['execution-state-view'] },
   'health-monitor': { main: ['tool-health-view'] },
   'transcript-review': { main: ['transcript-search-view'] },
+  'planning-board': { main: ['board-view'] },
   'project-creator': { main: ['project-create-form'] }
 };
 

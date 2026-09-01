@@ -15,8 +15,12 @@ export function mount(el, ctx) {
   let sessionNote = null;
   let session = null;   // picked session id
   let events = [];
+  let editing = false;  // the New pane swapped for a governed textarea
+  let draft = null;     // typed-but-unsaved working text; survives repaints
+  let editPath = null;  // path the open edit belongs to
 
   const escape = ctx.esc;
+  const editDirty = () => editing && draft != null && draft !== (doc?.working?.text ?? '');
 
   async function load() {
     doc = null; sessions = []; session = null; events = []; sessionNote = null;
@@ -63,10 +67,64 @@ export function mount(el, ctx) {
           <span class="mono">${escape((doc.base.sha256 || '').slice(0, 12))}</span></div>
           <div class="doc-col" data-col="left">${left || '<div class="empty">The preserved side is empty.</div>'}</div></div>
         <div><div class="pane-label"><span>NEW — ${escape(doc.working.from)}</span>
-          <span class="mono">${escape(doc.working.sha256.slice(0, 12))}</span></div>
-          <div class="doc-col" data-col="right">${right}</div></div>
+          <span class="pane-actions"><span class="mono">${escape(doc.working.sha256.slice(0, 12))}</span>
+            ${!ctx.selection ? '' : editing
+              ? `<button data-role="save-working" class="primary">Save</button>
+                 <button data-role="cancel-working">Cancel</button>`
+              : `<button data-role="edit-working" title="Edit the working document in place">✎ Edit</button>`}
+          </span></div>
+          ${editing
+            ? `<div data-role="conflict" hidden></div>
+               <textarea data-role="working-edit" class="working-edit" spellcheck="false"></textarea>`
+            : `<div class="doc-col" data-col="right">${right}</div>`}</div>
       </div>`;
     host.dataset.rows = JSON.stringify(rows.map(r => r.right)); // for card highlighting
+    if (editing) {
+      const area = host.querySelector('[data-role="working-edit"]');
+      area.value = draft ?? doc.working.text;
+      area.oninput = () => { draft = area.value; };
+      host.querySelector('[data-role="save-working"]').onclick = () => saveWorking(host, area);
+      host.querySelector('[data-role="cancel-working"]').onclick = () => {
+        if (editDirty() && !confirm('Discard unsaved changes?')) return;
+        editing = false; draft = null; editPath = null;
+        paint();
+      };
+    } else if (ctx.selection) {
+      host.querySelector('[data-role="edit-working"]').onclick = () => {
+        editing = true; draft = null; editPath = ctx.selection.path;
+        paint();
+      };
+    }
+  }
+
+  // Governed save of the edited working text: same checksum-guarded PUT the
+  // markdown editor uses. A stale base (the file changed under this edit) is
+  // a frozen-reference conflict — both SHAs shown, nothing overwritten.
+  async function saveWorking(host, area) {
+    try {
+      await ctx.saveFile(area.value);
+      editing = false; draft = null; editPath = null;
+      reload();
+    } catch (error) {
+      if (error.data?.error === 'STALE_BASE') {
+        const box = host.querySelector('[data-role="conflict"]');
+        box.hidden = false;
+        box.innerHTML = `
+          <div class="conflict">
+            <strong>Frozen base conflict.</strong> The file changed since you loaded it — saving now would overwrite someone else's bytes.
+            <div class="keyval mono"><div class="key">your base</div><div>${escape(error.data.expected)}</div></div>
+            <div class="keyval mono"><div class="key">on disk</div><div>${escape(error.data.actual)}</div></div>
+            <button data-role="reload-disk">Load the disk version (discards this edit)</button>
+          </div>`;
+        box.querySelector('[data-role="reload-disk"]').onclick = async () => {
+          editing = false; draft = null; editPath = null;
+          await ctx.refreshSelection();
+        };
+      } else {
+        ctx.notify(`${error.data?.error || 'ERROR'}: ${error.message}`, 'error');
+        if (error.data?.preflight) alert(`${error.message}\n\n${JSON.stringify(error.data.preflight, null, 2)}`);
+      }
+    }
   }
 
   function paintOriginal(host) {
@@ -136,8 +194,20 @@ export function mount(el, ctx) {
     if (first) first.scrollIntoView({ block: 'center' });
   }
 
-  const reload = () => { paint(); load().then(paint).catch(e => ctx.notify(e.message, 'error')); };
-  ctx.bus.on('selection', reload);
+  const reload = () => {
+    // Never rebuild over an unsaved working edit — the checksum guard catches
+    // any divergence at save time instead.
+    if (editDirty()) return;
+    paint();
+    load().then(paint).catch(e => ctx.notify(e.message, 'error'));
+  };
+  ctx.onDirty(editDirty);
+  ctx.bus.on('selection', () => {
+    // Switching files closes the editor (same behavior as markdown-editor);
+    // a same-path refresh with a dirty draft is skipped by the reload guard.
+    if (editing && ctx.selection?.path !== editPath) { editing = false; draft = null; editPath = null; }
+    reload();
+  });
   ctx.bus.on('file-saved', reload);
   ctx.bus.on('card-text', ({ original, text }) => highlightFrom(original || text));
   ctx.bus.on('goto-event', ({ n }) => {

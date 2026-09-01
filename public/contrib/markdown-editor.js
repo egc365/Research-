@@ -67,7 +67,11 @@ export function mount(el, ctx) {
     }
   }
 
-  text.addEventListener('input', () => { dirty = true; ctx.notify('Unsaved working changes.'); });
+  // Notify only on the clean->dirty transition — a status write per keystroke
+  // stomps meaningful messages and costs a DOM update per key.
+  text.addEventListener('input', () => {
+    if (!dirty) { dirty = true; ctx.notify('Unsaved working changes.'); }
+  });
   saveBtn.onclick = save;
   const keyHandler = event => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); save(); }

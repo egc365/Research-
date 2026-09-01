@@ -120,6 +120,17 @@ async function api(req, res, url, { store, plugins, surface }) {
     const body = await readJson(req);
     return json(res, 200, store.restoreEntry({ rootPath: body.rootPath, trashPath: body.path, actor: body.actor || 'human' }));
   }
+  if (req.method === 'POST' && url.pathname === '/api/fs/purge') {
+    // Purging is permanent deletion: owner surface only, by design.
+    if (surface === 'agent') return json(res, 403, { error: 'OWNER_SURFACE_ONLY', message: 'Permanent deletion happens on the owner surface.' });
+    const body = await readJson(req);
+    return json(res, 200, store.purgeTrashEntry({ rootPath: body.rootPath, trashPath: body.path, actor: body.actor || 'human' }));
+  }
+  if (req.method === 'POST' && url.pathname === '/api/fs/empty-trash') {
+    if (surface === 'agent') return json(res, 403, { error: 'OWNER_SURFACE_ONLY', message: 'Emptying the trash happens on the owner surface.' });
+    const body = await readJson(req);
+    return json(res, 200, store.emptyTrash({ rootPath: body.rootPath, actor: body.actor || 'human' }));
+  }
 
   // ---- appearance + navigation preferences (validated JSON, owner state) ----
   if (req.method === 'GET' && url.pathname === '/api/ui-preferences') {

@@ -294,6 +294,40 @@ async function loadModule(row) {
   return kernel.modules.get(row.contribution_id);
 }
 
+// Drag divider between the main and side slots. Until a paneSplit preference
+// exists the layout keeps its fixed side width; the first drag (or a stored
+// pref) switches the grid to the --pane-split variable. Saved once on drag
+// end — never per pixel.
+function mountPaneResizer(slotEls) {
+  const divider = document.createElement('div');
+  divider.className = 'pane-resizer';
+  stage.insertBefore(divider, slotEls.side);
+  const saved = mergedPrefs().paneSplit;
+  if (saved) {
+    stage.classList.add('has-split');
+    stage.style.setProperty('--pane-split', saved);
+  }
+  divider.onmousedown = event => {
+    event.preventDefault();
+    const left = slotEls.main.getBoundingClientRect().left;
+    const width = slotEls.side.getBoundingClientRect().right - left;
+    const clamp = x => Math.min(80, Math.max(20, Math.round((x - left) / width * 100)));
+    stage.classList.add('has-split');
+    divider.classList.add('dragging');
+    const move = e => stage.style.setProperty('--pane-split', clamp(e.clientX));
+    const up = async e => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      divider.classList.remove('dragging');
+      const paneSplit = clamp(e.clientX);
+      stage.style.setProperty('--pane-split', paneSplit);
+      if (kernel.workspace) await savePrefs({ paneSplit }).catch(showError);
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  };
+}
+
 async function activateStation(stationId) {
   if (navigationBlocked()) return;
   // Guard before tearing anything down: a target station that is not enabled
@@ -319,20 +353,46 @@ async function activateStation(stationId) {
     stage.append(el);
     slotEls[name] = el;
   }
-  const wired = kernel.composition.stations[stationId] || [];
+  if (slotEls.main && slotEls.side && (layout === 'main-side' || layout === 'rail-main-side')) {
+    mountPaneResizer(slotEls);
+  }
+  // Lifecycle metadata sits at the bottom of the side slot and starts folded —
+  // a render-order nudge only; the stored wiring sort_order is untouched.
+  const lifecycleLast = new Set(['state-badge', 'provenance-block', 'revision-timeline']);
+  const demote = row => row.slot_name === 'side' && lifecycleLast.has(row.contribution_id) ? 1 : 0;
+  const wired = [...(kernel.composition.stations[stationId] || [])].sort((a, b) => demote(a) - demote(b));
   for (const row of wired) {
-    const host = slotEls[row.slot_name];
-    if (!host) continue;
+    const slotEl = slotEls[row.slot_name];
+    if (!slotEl) continue;
     const section = document.createElement('section');
-    host.append(section);
+    slotEl.append(section);
+    let host = section;
+    if (row.slot_name === 'side') {
+      const remembered = uiMemory.read().sideCollapsed?.[stationId]?.[row.contribution_id];
+      const collapsed = remembered ?? lifecycleLast.has(row.contribution_id);
+      section.className = 'section side-section' + (collapsed ? ' collapsed' : '');
+      const head = document.createElement('div');
+      head.className = 'section-head';
+      head.innerHTML = `<span data-caret>${collapsed ? '▸' : '⌄'}</span><span>${esc(row.label)}</span>`;
+      head.onclick = () => {
+        const next = !section.classList.contains('collapsed');
+        section.classList.toggle('collapsed', next);
+        head.querySelector('[data-caret]').textContent = next ? '▸' : '⌄';
+        uiMemory.patch(s => { ((s.sideCollapsed ??= {})[stationId] ??= {})[row.contribution_id] = next; });
+      };
+      const body = document.createElement('div');
+      body.className = 'section-body';
+      section.append(head, body);
+      host = body;
+    }
     try {
       const module = await loadModule(row);
       const { ctx, dispose } = makeContext(stationId, row.config);
-      const unmount = await module.mount(section, ctx);
+      const unmount = await module.mount(host, ctx);
       kernel.disposers.push(() => { if (typeof unmount === 'function') unmount(); dispose(); });
     } catch (error) {
       console.error(`mount ${row.contribution_id}`, error);
-      section.innerHTML = `<div class="card"><h3>${esc(row.label)}</h3><div class="muted">Failed to mount: ${esc(error.message)}</div></div>`;
+      host.innerHTML = `<div class="card"><h3>${esc(row.label)}</h3><div class="muted">Failed to mount: ${esc(error.message)}</div></div>`;
     }
   }
   for (const [name, el] of Object.entries(slotEls)) {
@@ -707,7 +767,14 @@ function renderCustomize(tab = 'appearance') {
         radius: read('radius'), fontSize: Number(read('fontSize')), editorFontSize: Number(read('editorFontSize'))
       };
     };
-    pane.querySelectorAll('[data-pref]').forEach(el => el.oninput = () => applyAppearance(draft()));
+    // Coalesce the live preview: rewriting root CSS variables restyles the
+    // whole app, so a keystroke burst must cost one recalc per frame, not one
+    // per key.
+    let previewFrame = 0;
+    pane.querySelectorAll('[data-pref]').forEach(el => el.oninput = () => {
+      cancelAnimationFrame(previewFrame);
+      previewFrame = requestAnimationFrame(() => applyAppearance(draft()));
+    });
     pane.querySelector('[data-role="save"]').onclick = async () => {
       const userScope = pane.querySelector('[data-role="user-scope"]').checked;
       await savePrefs(draft(), { userScope }).catch(showError);
