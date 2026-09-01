@@ -196,12 +196,18 @@ async function loadModule(row) {
 
 async function activateStation(stationId) {
   if (navigationBlocked()) return;
+  // Guard before tearing anything down: a target station that is not enabled
+  // for this workspace must not blank the current view ("Open in X" buttons).
+  const station = enabledStations().find(row => row.plugin_id === stationId);
+  if (!station) {
+    notify(`${stationId} is not enabled for this workspace — enable it in Plugins ⚙.`, 'error');
+    if (kernel.activeStation) return;
+    return renderEmptyFrame();
+  }
   disposeMounts();
   kernel.activeStation = stationId;
   if (kernel.workspace) uiMemory.patch(s => { (s.station ??= {})[kernel.workspace.root_path] = stationId; });
   renderStationBar();
-  const station = enabledStations().find(row => row.plugin_id === stationId);
-  if (!station) return renderEmptyFrame();
   const layout = station.manifest.layout || 'main';
   const slots = station.manifest.slots || ['main'];
   stage.className = `stage layout-${layout}`;
