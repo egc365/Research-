@@ -7,47 +7,31 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+  <!-- The kernel owns only this frame: workspace selection, the plugin
+       manager entry point, the station switcher, and slot containers.
+       Everything with domain identity arrives as a plugin. -->
   <header class="topbar">
-    <div>
-      <div class="eyebrow">WORKBENCH</div>
-      <h1>Research Operations</h1>
-    </div>
-    <div class="toolbar">
+    <div class="brand">Research Operations</div>
+    <div class="kernel-controls">
       <select id="workspaceSelect" aria-label="Workspace"></select>
-      <button id="addWorkspace">Add path</button>
-      <button id="saveFile" class="primary">Save</button>
+      <button id="addWorkspace" title="Register an absolute folder path">Add path</button>
+      <nav id="stationBar" class="station-bar" aria-label="Stations"></nav>
+      <button id="openPluginManager" class="plugins-btn">Plugins ⚙</button>
     </div>
   </header>
 
-  <main class="shell">
-    <aside class="tree-pane">
-      <div class="pane-title">Workspace</div>
-      <div id="tree" class="tree"></div>
-    </aside>
+  <main id="stage" class="stage"></main>
 
-    <section class="editor-pane">
-      <div class="editor-head">
-        <div>
-          <div id="fileName" class="file-name">Select a file</div>
-          <div id="fileMeta" class="muted"></div>
-        </div>
-        <div id="stateBadge" class="badge">—</div>
-      </div>
-      <textarea id="editor" spellcheck="false" disabled placeholder="Select a file in the tree to edit it here."></textarea>
-      <div id="centerStation" class="center-station" hidden></div>
-      <div id="statusBar" class="statusbar">Ready.</div>
-    </section>
+  <footer id="statusBar" class="statusbar">Ready.</footer>
 
-    <aside class="control-pane">
-      <div class="pane-title">Stations</div>
-      <div id="stationList" class="stations"></div>
-      <div id="stationHeader" class="station-header" hidden></div>
-      <div id="pluginPanel" class="plugin-panel">
-        <div class="empty">Pick a station to open its controls here.</div>
-      </div>
-    </aside>
-  </main>
+  <dialog id="pluginManager" class="plugin-manager">
+    <div class="pm-head">
+      <strong>Plugins</strong>
+      <button id="closePluginManager">Close</button>
+    </div>
+    <div id="pluginManagerBody" class="pm-body"></div>
+  </dialog>
 
-  <script type="module" src="/app.js"></script>
+  <script type="module" src="/kernel.js"></script>
 </body>
 </html>

@@ -28,6 +28,46 @@ This repository is the clean-room successor to the useful parts of Card Workshop
 - **Execution state (SKILL.state, arXiv 2608.26263).** Per-run bounded structured state: agents propose JSON patches (`null` deletes a key); the runtime validates, merges (`Σ_{t+1} = Σ_t ⊕ ΔΣ_t`), and versions. Malformed or stale-version patches change nothing. Reasoning traces are never stored.
 - **Statistics.** The statistics plugin reads the registry and event ledger only, never raw files.
 
+## Composable UI (V1, `feature/composable-ui-v1`)
+
+The UI has no domain identity. `public/kernel.js` is a blank composition
+kernel that owns only: workspace selection, the plugin manager, the slot
+renderer, plugin lifecycle (mount → dispose), the selected file/card, the
+active station, and the shared event bus + services. A fresh workspace with
+nothing enabled renders an empty frame: *Workspace — No views loaded — + Add
+plugin*. Everything with a name (tree, editor, diff, governance, statistics)
+arrives as a plugin.
+
+Three levels:
+
+- **Kernel** — no substantive behavior.
+- **Stations** (`plugin_kind='station'`) — user-facing composed tools: file
+  workbench, revision center, governance center, dashboard, provenance
+  viewer, execution state, project creator. A workspace chooses which
+  stations are enabled.
+- **Contributions** (`plugin_kind='contribution'`) — behaviors coded once in
+  `public/contrib/*.js` (filesystem-tree, markdown-editor,
+  dual-document-view, diff-renderer, card-rail, amendment-editor,
+  revision-timeline, actor-filter, provenance-block, state-badge,
+  promotion-control, candidate-list, validation-result, project-create-form,
+  statistics-view, execution-state-view). Stations compose them; no
+  contribution is copied into two stations, and contributions talk only
+  through the kernel bus and services — never by importing each other.
+
+SQLite is the composition crosswalk (routing/configuration, never content):
+`ui_plugins` (the catalog, synced from `plugins/registry.mjs` at boot without
+overwriting owner enabled-flags), `workspace_plugins` (which stations a
+workspace enables — zero rows for a fresh workspace, which *is* the empty
+frame), `station_contributions` (slot wiring, seeded only when a station has
+no rows, so owner rewiring survives restarts).
+
+New governed records: **amendments** (append-only rev-per-card proposals
+against a document block; the document itself is never touched) and
+**decisions** (record-only `accept` | `needs-more-work` in the event ledger).
+All composition writes and decisions return 403 on the agent surface, tested
+beside the promotion guard; agents may propose amendments and are stamped
+`actor=agent` regardless of what they claim.
+
 ## Run
 
 Requires Node 22.5+ because V0 uses the built-in `node:sqlite` module.
