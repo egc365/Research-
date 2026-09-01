@@ -79,7 +79,29 @@ export class ControlStore {
   }
 
   listWorkspaces() {
-    return this.db.prepare('SELECT * FROM workspace_roots ORDER BY label, root_path').all();
+    // `exists` tells the UI a registration outlived its folder, so the switcher
+    // can say "missing on disk" instead of rendering a ghost that ENOENTs.
+    return this.db.prepare('SELECT * FROM workspace_roots ORDER BY label, root_path').all()
+      .map(row => ({ ...row, exists: fs.existsSync(row.root_path) }));
+  }
+
+  // Registered workspace roots sitting at or under a path. A governed move or
+  // trash of that path must carry these registrations along — leaving them
+  // behind is what turns a deleted folder into a ghost workspace.
+  registeredRootsUnder(targetPath) {
+    const target = path.resolve(targetPath);
+    return this.db.prepare("SELECT root_path FROM workspace_roots WHERE root_path=? OR root_path LIKE ? || '/%'")
+      .all(target, target).map(row => row.root_path);
+  }
+
+  // Caller holds the transaction. Composition, preferences and sidebar rows go;
+  // workspace_roots delete cascades artifact_registry. path_labels stay keyed
+  // to their (possibly trashed) paths so a restore keeps its designations.
+  #unregisterWorkspaceRows(root) {
+    this.db.prepare('DELETE FROM workspace_plugins WHERE workspace_root=?').run(root);
+    this.db.prepare('DELETE FROM workspace_ui_preferences WHERE workspace_root=?').run(root);
+    this.db.prepare('DELETE FROM sidebar_sections WHERE workspace_root=?').run(root);
+    this.db.prepare('DELETE FROM workspace_roots WHERE root_path=?').run(root);
   }
 
   getWorkspace(rootPath) {
@@ -95,6 +117,12 @@ export class ControlStore {
   }
 
   listDirectory(rootPath, relativePath = '.') {
+    const root = path.resolve(rootPath);
+    if (!fs.existsSync(root)) {
+      const error = new Error(`WORKSPACE_ROOT_MISSING: no folder on disk at ${root} — restore the folder or unregister the workspace`);
+      error.code = 'WORKSPACE_ROOT_MISSING';
+      throw error;
+    }
     const target = this.assertInsideWorkspace(rootPath, path.join(rootPath, relativePath));
     return fs.readdirSync(target, { withFileTypes: true })
       .filter(entry => entry.name !== '.research-ops')
@@ -581,6 +609,7 @@ export class ControlStore {
     if (fs.existsSync(to)) throw new Error('Already exists: ' + to);
     if ((to + '/').startsWith(from + '/')) throw new Error('Cannot move a folder into itself');
     const isDir = fs.statSync(from).isDirectory();
+    const affectedRoots = isDir ? this.registeredRootsUnder(from) : [];
     fs.renameSync(from, to);
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -591,6 +620,19 @@ export class ControlStore {
           this.db.prepare(`UPDATE ${table} SET path=? || substr(path, length(?)+1) WHERE path LIKE ? || '/%'`)
             .run(to, from, from);
         }
+      }
+      // A registration follows its folder. root_path is the parent key of the
+      // artifact_registry FK, so: insert the new root, re-point every
+      // workspace-keyed row, then drop the old root (nothing left to cascade).
+      for (const oldRoot of affectedRoots) {
+        const newRoot = oldRoot === from ? to : to + oldRoot.slice(from.length);
+        const row = this.db.prepare('SELECT * FROM workspace_roots WHERE root_path=?').get(oldRoot);
+        this.db.prepare('INSERT INTO workspace_roots(root_path,label,created_at,updated_at) VALUES(?,?,?,?)')
+          .run(newRoot, row.label, row.created_at, now());
+        for (const table of ['artifact_registry', 'workspace_plugins', 'workspace_ui_preferences', 'sidebar_sections', 'path_labels']) {
+          this.db.prepare(`UPDATE ${table} SET workspace_root=? WHERE workspace_root=?`).run(newRoot, oldRoot);
+        }
+        this.db.prepare('DELETE FROM workspace_roots WHERE root_path=?').run(oldRoot);
       }
       this.db.exec('COMMIT');
     } catch (error) {
@@ -615,6 +657,10 @@ export class ControlStore {
     if (!fs.existsSync(target)) throw new Error('No such file or folder: ' + target);
     if (target.includes(`${path.sep}.research-ops${path.sep}`)) throw new Error('Already in the trash');
     const isDir = fs.statSync(target).isDirectory();
+    // Folders being trashed may themselves be registered workspace roots (or
+    // contain some). Their registrations go with them — a workspace_roots row
+    // pointing at trashed bytes is the ghost that haunted the switcher.
+    const unregistered = isDir ? this.registeredRootsUnder(target).filter(r => r !== root) : [];
     const trashDir = path.join(root, '.research-ops', 'trash');
     fs.mkdirSync(trashDir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -629,6 +675,7 @@ export class ControlStore {
             .run(dest, target, target);
         }
       }
+      for (const ghost of unregistered) this.#unregisterWorkspaceRows(ghost);
       this.db.prepare("UPDATE artifact_registry SET state='archived', updated_at=? WHERE path=? OR path LIKE ? || '/%'")
         .run(now(), dest, dest);
       this.db.exec('COMMIT');
@@ -637,8 +684,8 @@ export class ControlStore {
       fs.renameSync(dest, target);
       throw error;
     }
-    this.appendEvent({ filePath: dest, eventType: 'DELETE', actor, metadata: { from: target, kind: isDir ? 'directory' : 'file', trash: true } });
-    return { trashed: true, from: target, path: dest, kind: isDir ? 'directory' : 'file' };
+    this.appendEvent({ filePath: dest, eventType: 'DELETE', actor, metadata: { from: target, kind: isDir ? 'directory' : 'file', trash: true, ...(unregistered.length ? { unregistered_workspaces: unregistered } : {}) } });
+    return { trashed: true, from: target, path: dest, kind: isDir ? 'directory' : 'file', unregisteredWorkspaces: unregistered };
   }
 
   listLabels() {

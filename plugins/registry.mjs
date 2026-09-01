@@ -55,6 +55,13 @@ export const stations = [
     }
   },
   {
+    id: 'health-monitor', label: 'Tool health', version: '1.0.0',
+    manifest: {
+      description: 'Up/down and latency for the machine’s tool ports — the launchpad’s program list plus this workspace’s links, probed from the server (loopback only).',
+      layout: 'main', slots: ['main'], icon: '🩺'
+    }
+  },
+  {
     id: 'project-creator', label: 'Project creator', version: '1.0.0',
     manifest: {
       description: 'Start a new project folder inside the workspace with a seeded README, registered in the ledger from its first byte.',
@@ -88,7 +95,8 @@ export const contributions = [
   { id: 'section-projects',   label: 'Projects',           entry: '/contrib/section-projects.js',   description: 'Sidebar section: folders labeled ‘project’, nested, click to reveal in Files.' },
   { id: 'section-recent',     label: 'Recent',             entry: '/contrib/section-recent.js',     description: 'Sidebar section: last touched artifacts from the ledger.' },
   { id: 'section-trash',      label: 'Trash',              entry: '/contrib/section-trash.js',      description: 'Sidebar section: trashed entries with one-click restore.' },
-  { id: 'execution-state-view', label: 'Execution state',  entry: '/contrib/execution-state-view.js', description: 'Inspect and patch a run’s structured state with optimistic version checks.' }
+  { id: 'execution-state-view', label: 'Execution state',  entry: '/contrib/execution-state-view.js', description: 'Inspect and patch a run’s structured state with optimistic version checks.' },
+  { id: 'tool-health-view',   label: 'Tool health',        entry: '/contrib/tool-health.js',        description: 'Port health board: probes the machine’s tools via the tool-health service and shows up/down with latency. Extra targets via wiring config { targets: [...] }.' }
 ];
 
 // Default wiring, applied only when a station has zero rows in
@@ -121,6 +129,7 @@ export const defaultWiring = {
     side: ['actor-filter', 'provenance-block']
   },
   'execution-state': { main: ['execution-state-view'] },
+  'health-monitor': { main: ['tool-health-view'] },
   'project-creator': { main: ['project-create-form'] }
 };
 

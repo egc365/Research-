@@ -241,6 +241,36 @@ function renderStationBar() {
   }
 }
 
+// A registered workspace whose folder is gone from disk (moved or deleted
+// outside the app). Nothing can mount against it, so the stage explains and
+// offers the one useful verb instead of letting every contribution ENOENT.
+function workspaceMissing() {
+  return Boolean(kernel.workspace) && kernel.workspace.exists === false;
+}
+
+function renderMissingFrame() {
+  stage.className = 'stage layout-main';
+  const frame = document.createElement('div');
+  frame.className = 'empty-frame';
+  frame.innerHTML = `
+    <div class="ws-name">Workspace folder is missing on disk</div>
+    <div class="muted mono" style="word-break:break-all">${esc(kernel.workspace.root_path)}</div>
+    <div>The registration outlived its folder — it was moved or deleted outside this app.
+    Restore the folder at that path, or unregister the workspace here.</div>
+    <button id="missingUnregister" class="danger">Unregister this workspace</button>`;
+  stage.append(frame);
+  frame.querySelector('#missingUnregister').onclick = async () => {
+    const name = kernel.workspace.label || kernel.workspace.root_path;
+    if (!confirm(`Unregister workspace '${name}'? Only the registration is removed.`)) return;
+    try {
+      await request('/api/workspaces/remove', { method: 'POST', body: JSON.stringify({ rootPath: kernel.workspace.root_path }) });
+      notify(`Unregistered '${name}'.`, 'ok');
+      kernel.workspace = null;
+      await loadWorkspaces();
+    } catch (error) { showError(error); }
+  };
+}
+
 function renderEmptyFrame() {
   stage.className = 'stage layout-main';
   const frame = document.createElement('div');
@@ -313,6 +343,11 @@ async function activateStation(stationId) {
 async function recompose(keepStation = true) {
   disposeMounts();
   await loadComposition();
+  if (workspaceMissing()) {
+    kernel.activeStation = null;
+    renderStationBar();
+    return renderMissingFrame();
+  }
   const available = enabledStations();
   if (!available.length) {
     kernel.activeStation = null;
@@ -342,6 +377,10 @@ function disposeSidebar() {
 async function renderSidebar() {
   disposeSidebar();
   if (!kernel.workspace) return;
+  if (workspaceMissing()) {
+    sidebarBody.innerHTML = '<div class="empty">Workspace folder is missing on disk.</div>';
+    return;
+  }
   kernel.sidebarSections = await request(`/api/sidebar?root=${encodeURIComponent(kernel.workspace.root_path)}`);
   const catalog = new Map(kernel.composition.catalog.map(row => [row.plugin_id, row]));
   const sidebarWiring = kernel.sidebarSections.map(row => ({ contribution_id: row.section_id, slot_name: 'sidebar', config: row.config }));
@@ -418,7 +457,7 @@ async function loadWorkspaces(selectPath = null) {
   for (const ws of kernel.workspaces) {
     const option = document.createElement('option');
     option.value = ws.root_path;
-    option.textContent = ws.label || ws.root_path;
+    option.textContent = (ws.label || ws.root_path) + (ws.exists === false ? ' ⚠ missing on disk' : '');
     workspaceSelect.append(option);
   }
   // A contribution (the launchpad) may ask the kernel to switch workspaces.

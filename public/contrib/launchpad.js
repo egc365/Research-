@@ -80,7 +80,8 @@ export function mount(el, ctx) {
       const isCurrent = ws.root_path === ctx.workspace?.root_path;
       const node = card('div');
       const name = ws.label || ws.root_path.split('/').filter(Boolean).pop() || ws.root_path;
-      fill(node, '🗂', name, ws.root_path + (isCurrent ? ' · current' : ''));
+      const missing = ws.exists === false;
+      fill(node, missing ? '⚠' : '🗂', name + (missing ? ' — missing on disk' : ''), ws.root_path + (isCurrent ? ' · current' : ''));
       if (!isCurrent) node.onclick = () => ctx.bus.emit('switch-workspace', { root: ws.root_path });
       wsGrid.append(node);
     }
