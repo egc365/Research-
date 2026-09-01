@@ -158,3 +158,29 @@ test('agents may propose amendments (stamped agent); decisions are owner-only', 
     assert.deepEqual((await recorded.json()).latestByCard, { 'block-1': 'accept' });
   } finally { await f.close(); }
 });
+
+test('label writes are owner-only; mkdir works on both surfaces with the actor stamped', async () => {
+  const f = await fixture();
+  try {
+    for (const [pathName, body] of [
+      ['/api/labels', { name: 'evidence' }],
+      ['/api/path-labels', { rootPath: f.root, path: f.file, label: 'evidence' }]
+    ]) {
+      const denied = await call(f.agentBase, 'POST', pathName, body);
+      assert.equal(denied.status, 403);
+      assert.equal((await denied.json()).error, 'OWNER_SURFACE_ONLY');
+    }
+    assert.equal(f.store.listLabels().length, 0);
+
+    assert.equal((await call(f.ownerBase, 'POST', '/api/labels', { name: 'evidence', color: '#4fc08d' })).status, 200);
+    assert.equal((await call(f.ownerBase, 'POST', '/api/path-labels', { rootPath: f.root, path: f.file, label: 'evidence' })).status, 200);
+    const seen = await (await fetch(`${f.agentBase}/api/path-labels?root=${encodeURIComponent(f.root)}`)).json();
+    assert.deepEqual(seen[f.file].map(a => a.label), ['evidence']); // agents read designations
+
+    const made = await call(f.agentBase, 'POST', '/api/fs/mkdir', { rootPath: f.root, path: `${f.root}/agent-made`, actor: 'human' });
+    assert.equal(made.status, 201);
+    const event = f.store.history(`${f.root}/agent-made`)[0];
+    assert.equal(event.event_type, 'MKDIR');
+    assert.equal(event.actor, 'agent'); // the claim was overridden at the boundary
+  } finally { await f.close(); }
+});

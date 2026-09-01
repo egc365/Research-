@@ -116,3 +116,12 @@ button:disabled { opacity: .45; cursor: default; }
   letter-spacing: .05em; margin-top: 6px; }
 .pm-wire-row { display: flex; gap: 8px; align-items: center; padding: 1px 0; }
 .pm-add { display: flex; gap: 6px; margin-top: 8px; }
+
+.tree-toolbar { display: flex; gap: 6px; margin-bottom: 6px; }
+.tree-toolbar button, .tree-add { padding: 1px 8px; font-size: .85em; }
+.tree-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.tree-row > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-add { visibility: hidden; flex: none; }
+.tree-row:hover .tree-add { visibility: visible; }
+.label-chip { display: inline-block; border: 1px solid; border-radius: 999px;
+  padding: 0 8px; font-size: .78em; vertical-align: middle; }

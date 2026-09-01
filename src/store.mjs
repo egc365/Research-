@@ -488,6 +488,72 @@ export class ControlStore {
     return { catalog, enabled, stations };
   }
 
+  // ------------------------------------------------------------- fs + labels
+  // Folders are real filesystem directories (containment-checked, provenance
+  // event appended). Labels are the owner's designation schema, living in the
+  // same SQLite crosswalk as the composition tables: `labels` defines the
+  // schema, `path_labels` assigns names to files or folders.
+
+  createDirectory({ rootPath, dirPath, actor = 'human' }) {
+    const target = this.assertInsideWorkspace(rootPath, dirPath);
+    if (fs.existsSync(target)) throw new Error('Already exists: ' + target);
+    fs.mkdirSync(target, { recursive: true });
+    this.appendEvent({ filePath: target, eventType: 'MKDIR', actor, metadata: { workspace_root: path.resolve(rootPath) } });
+    return { path: target, created: true };
+  }
+
+  listLabels() {
+    const counts = {};
+    for (const row of this.db.prepare('SELECT label, COUNT(*) AS n FROM path_labels GROUP BY label').all()) {
+      counts[row.label] = row.n;
+    }
+    return this.db.prepare('SELECT * FROM labels ORDER BY name').all()
+      .map(row => ({ ...row, assigned: counts[row.name] || 0 }));
+  }
+
+  defineLabel({ name, color = '#4fa3ff', description = null }) {
+    if (!name || !/^[a-z0-9][a-z0-9 ._-]*$/i.test(name)) throw new Error('Label names: letters, digits, space, dot, dash, underscore');
+    this.db.prepare(`
+      INSERT INTO labels(name,color,description,created_at) VALUES(?,?,?,?)
+      ON CONFLICT(name) DO UPDATE SET color=excluded.color, description=excluded.description
+    `).run(name, color, description, now());
+    return this.db.prepare('SELECT * FROM labels WHERE name=?').get(name);
+  }
+
+  deleteLabel(name) {
+    this.db.prepare('DELETE FROM path_labels WHERE label=?').run(name);
+    this.db.prepare('DELETE FROM labels WHERE name=?').run(name);
+    return { deleted: name };
+  }
+
+  pathLabels(rootPath) {
+    const rows = this.db.prepare(`
+      SELECT pl.path, pl.label, l.color FROM path_labels pl
+      JOIN labels l ON l.name = pl.label
+      WHERE pl.workspace_root=? ORDER BY pl.path, pl.label
+    `).all(path.resolve(rootPath));
+    const byPath = {};
+    for (const row of rows) (byPath[row.path] ??= []).push({ label: row.label, color: row.color });
+    return byPath;
+  }
+
+  assignLabel({ rootPath, filePath, label, actor = 'human', remove = false }) {
+    const target = this.assertInsideWorkspace(rootPath, filePath);
+    if (remove) {
+      this.db.prepare('DELETE FROM path_labels WHERE path=? AND label=?').run(target, label);
+      return { path: target, label, removed: true };
+    }
+    if (!this.db.prepare('SELECT name FROM labels WHERE name=?').get(label)) {
+      throw new Error('Unknown label: ' + label + ' — define it in the schema first');
+    }
+    if (!fs.existsSync(target)) throw new Error('No such file or folder: ' + target);
+    this.db.prepare(`
+      INSERT INTO path_labels(workspace_root,path,label,actor,created_at) VALUES(?,?,?,?,?)
+      ON CONFLICT(path,label) DO NOTHING
+    `).run(path.resolve(rootPath), target, label, actor, now());
+    return { path: target, label, assigned: true };
+  }
+
   // ---------------------------------------------------------------- amendments
   // An amendment is an append-only proposal against one card (block) of one
   // document. rev is the next number for (path, card); nothing here ever

@@ -17,6 +17,7 @@ export function mount(el, ctx) {
     }[state] || [];
     el.innerHTML = `
       <div class="card"><h3>Promotion</h3>
+        <div class="muted" style="margin-bottom:6px">Governs this app's own artifact registry. The book promotion center at :8860 is a separate system.</div>
         <div class="keyval"><div class="key">State</div><div><span class="badge ${ctx.esc(state)}">${ctx.esc(state)}</span></div></div>
         ${card.promoted ? `<div class="keyval"><div class="key">Frozen</div><div class="mono">${ctx.esc(card.promoted.checksum.slice(0, 16))}… · ${ctx.esc(card.promoted.created_at)}</div></div>` : ''}
         ${card.validatedAt ? `<div class="keyval"><div class="key">Validated</div><div class="mono">${ctx.esc(card.validatedAt)}</div></div>` : ''}

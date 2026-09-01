@@ -71,6 +71,31 @@ async function api(req, res, url, { store, plugins, surface }) {
     });
     return json(res, 200, { ...result, preflight });
   }
+  // ---- filesystem creation + the owner's label schema (SQLite crosswalk) ----
+  if (req.method === 'POST' && url.pathname === '/api/fs/mkdir') {
+    const body = enforceSurfaceActor(surface, await readJson(req));
+    return json(res, 201, store.createDirectory({ rootPath: body.rootPath, dirPath: body.path, actor: body.actor || 'human' }));
+  }
+  if (req.method === 'GET' && url.pathname === '/api/labels') return json(res, 200, store.listLabels());
+  if (req.method === 'POST' && url.pathname === '/api/labels') {
+    // Designation is curation: the label schema is owner state.
+    if (surface === 'agent') return json(res, 403, { error: 'OWNER_SURFACE_ONLY', message: 'The label schema is managed on the owner surface.' });
+    const body = await readJson(req);
+    if (body.remove === true) return json(res, 200, store.deleteLabel(body.name));
+    return json(res, 200, store.defineLabel({ name: body.name, color: body.color, description: body.description }));
+  }
+  if (req.method === 'GET' && url.pathname === '/api/path-labels') {
+    return json(res, 200, store.pathLabels(url.searchParams.get('root')));
+  }
+  if (req.method === 'POST' && url.pathname === '/api/path-labels') {
+    if (surface === 'agent') return json(res, 403, { error: 'OWNER_SURFACE_ONLY', message: 'Labels are assigned on the owner surface.' });
+    const body = await readJson(req);
+    return json(res, 200, store.assignLabel({
+      rootPath: body.rootPath, filePath: body.path, label: body.label,
+      actor: body.actor || 'human', remove: body.remove === true
+    }));
+  }
+
   // ---- composition crosswalk (SQLite-backed routing/configuration) ----
   if (req.method === 'GET' && url.pathname === '/api/composition') {
     return json(res, 200, store.composition(url.searchParams.get('root')));

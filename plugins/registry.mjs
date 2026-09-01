@@ -78,6 +78,7 @@ export const contributions = [
   { id: 'candidate-list',     label: 'Candidates',         entry: '/contrib/candidate-list.js',     description: 'Registered artifacts grouped by lifecycle state; clicking selects the file.' },
   { id: 'validation-result',  label: 'Validation',         entry: '/contrib/validation-result.js',  description: 'Deterministic validator results for the selected file, check by check.' },
   { id: 'project-create-form',label: 'New project form',   entry: '/contrib/project-create-form.js',description: 'Name a project; the form writes the folder + README through the governed write path.' },
+  { id: 'label-designator',  label: 'Labels',             entry: '/contrib/label-designator.js',   description: 'Define the label schema and designate files or folders with labels — stored in the SQLite crosswalk, owner-only writes.' },
   { id: 'statistics-view',    label: 'Statistics',         entry: '/contrib/statistics-view.js',    description: 'Counts by state, event type, actor, and the last promotions.' },
   { id: 'execution-state-view', label: 'Execution state',  entry: '/contrib/execution-state-view.js', description: 'Inspect and patch a run’s structured state with optimistic version checks.' }
 ];
@@ -88,7 +89,7 @@ export const defaultWiring = {
   'file-workbench': {
     rail: ['filesystem-tree'],
     main: ['markdown-editor'],
-    side: ['state-badge', 'provenance-block', 'revision-timeline']
+    side: ['state-badge', 'label-designator', 'provenance-block', 'revision-timeline']
   },
   'revision-center': {
     rail: ['filesystem-tree'],
@@ -98,7 +99,7 @@ export const defaultWiring = {
   'governance-center': {
     rail: ['candidate-list'],
     main: ['validation-result'],
-    side: ['state-badge', 'promotion-control', 'provenance-block']
+    side: ['state-badge', 'promotion-control', 'label-designator', 'provenance-block']
   },
   'dashboard-viewer': { main: ['statistics-view'] },
   'provenance-viewer': {

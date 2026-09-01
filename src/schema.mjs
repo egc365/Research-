@@ -113,6 +113,24 @@ CREATE TABLE IF NOT EXISTS amendments (
 );
 
 CREATE INDEX IF NOT EXISTS amendments_path_idx ON amendments(path, card, rev DESC);
+
+CREATE TABLE IF NOT EXISTS labels (
+  name TEXT PRIMARY KEY,
+  color TEXT NOT NULL DEFAULT '#4fa3ff',
+  description TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS path_labels (
+  workspace_root TEXT NOT NULL,
+  path TEXT NOT NULL,
+  label TEXT NOT NULL REFERENCES labels(name) ON DELETE CASCADE,
+  actor TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(path, label)
+);
+
+CREATE INDEX IF NOT EXISTS path_labels_root_idx ON path_labels(workspace_root, path);
 `;
 
 export const lifecycle = ['working', 'candidate', 'validated', 'promoted', 'superseded', 'archived'];
