@@ -114,6 +114,12 @@ async function api(req, res, url, { store, plugins, surface }) {
       enabled: body.enabled !== false, sortOrder: body.sortOrder ?? 100, config: body.config || null
     }));
   }
+  if (req.method === 'POST' && url.pathname === '/api/stations') {
+    // Defining a station is composition authority — owner surface only.
+    if (surface === 'agent') return json(res, 403, { error: 'OWNER_SURFACE_ONLY', message: 'Stations are defined on the owner surface.' });
+    const body = await readJson(req);
+    return json(res, 201, store.defineStation({ id: body.id, label: body.label, description: body.description, layout: body.layout, icon: body.icon }));
+  }
   if (req.method === 'POST' && url.pathname === '/api/composition/station') {
     if (surface === 'agent') return json(res, 403, { error: 'OWNER_SURFACE_ONLY', message: 'Station wiring changes happen on the owner surface.' });
     const body = await readJson(req);

@@ -333,6 +333,39 @@ function renderPluginManager() {
   intro.textContent = `Stations enabled for this workspace compose behaviors into slots. Wiring edits apply to the station everywhere; nothing here touches your files.`;
   pluginManagerBody.append(intro);
 
+  // Owner-defined stations: name it, pick a layout, then wire contributions
+  // into its slots below exactly like a shipped station.
+  const maker = document.createElement('details');
+  maker.className = 'pm-station';
+  maker.innerHTML = `
+    <summary>＋ New station</summary>
+    <div class="pm-add" style="margin-top:8px">
+      <input data-role="st-label" placeholder="station name (e.g. Reading room)">
+      <select data-role="st-layout">
+        <option value="rail-main-side">rail + main + side</option>
+        <option value="main-side">main + side</option>
+        <option value="rail-main">rail + main</option>
+        <option value="main">main only</option>
+      </select>
+      <input data-role="st-icon" placeholder="icon" value="★" style="width:42px">
+      <button data-role="st-make" class="primary">Create</button>
+    </div>`;
+  maker.querySelector('[data-role="st-make"]').onclick = async () => {
+    const label = maker.querySelector('[data-role="st-label"]').value.trim();
+    if (!label) return notify('Give the station a name.', 'error');
+    const id = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    try {
+      await request('/api/stations', { method: 'POST', body: JSON.stringify({
+        id, label,
+        layout: maker.querySelector('[data-role="st-layout"]').value,
+        icon: maker.querySelector('[data-role="st-icon"]').value || '★'
+      }) });
+      await togglePlugin(id, true); // enable it here and rerender the manager
+      notify(`Station '${label}' created — wire contributions into its slots below.`, 'ok');
+    } catch (error) { showError(error); }
+  };
+  pluginManagerBody.append(maker);
+
   for (const station of stations) {
     const box = document.createElement('div');
     box.className = 'pm-station';

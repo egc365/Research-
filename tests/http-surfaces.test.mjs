@@ -214,3 +214,13 @@ test('workspace creation with create:true builds the folder, owner surface only'
     assert.deepEqual(composition.enabled, []);
   } finally { await f.close(); }
 });
+
+test('station definition is owner-surface only', async () => {
+  const f = await fixture();
+  try {
+    const denied = await call(f.agentBase, 'POST', '/api/stations', { id: 'agent-station', label: 'Nope' });
+    assert.equal(denied.status, 403);
+    const made = await call(f.ownerBase, 'POST', '/api/stations', { id: 'owner-station', label: 'Mine', layout: 'main' });
+    assert.equal(made.status, 201);
+  } finally { await f.close(); }
+});

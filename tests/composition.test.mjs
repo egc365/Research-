@@ -125,3 +125,22 @@ test('validation-center replaces governance-center with shared components config
     assert.equal(catalog.filter(x => x === id).length, 1);
   }
 });
+
+test('owner-defined stations render like shipped ones and survive catalog sync', t => {
+  const { store, dir } = freshStore(t);
+  store.syncCatalog(catalogRows([]));
+  store.seedStationWiring(defaultWiring);
+  const made = store.defineStation({ id: 'reading-room', label: 'Reading room', layout: 'rail-main' });
+  assert.equal(made.plugin_kind, 'station');
+  assert.deepEqual(JSON.parse(made.manifest_json).slots, ['rail', 'main']);
+  assert.throws(() => store.defineStation({ id: 'card-rail', label: 'x' }), /already names a contribution/);
+  assert.throws(() => store.defineStation({ id: 'Bad Id', label: 'x' }), /Station ids/);
+  store.setStationContribution({ stationId: 'reading-room', slotName: 'main', contributionId: 'dual-document-view', sortOrder: 10 });
+  const ws = path.join(dir, 'ws3'); fs.mkdirSync(ws);
+  store.addWorkspace(ws);
+  store.setWorkspacePlugin({ rootPath: ws, pluginId: 'reading-room' });
+  store.syncCatalog(catalogRows([])); // a restart never erases owner stations
+  const composition = store.composition(ws);
+  assert.ok(composition.enabled.some(r => r.plugin_id === 'reading-room'));
+  assert.deepEqual(composition.stations['reading-room'].map(r => r.contribution_id), ['dual-document-view']);
+});

@@ -42,15 +42,22 @@ Three levels:
 
 - **Kernel** — no substantive behavior.
 - **Stations** (`plugin_kind='station'`) — user-facing composed tools: file
-  workbench, revision center, governance center, dashboard, provenance
-  viewer, execution state, project creator. A workspace chooses which
-  stations are enabled.
+  workbench (authoring), revision center (the :8880 workflow ported: dual
+  document view, transcript cards, amendments, decisions), validation center
+  (review candidates/validated and Promote — the single final verb,
+  human-only), dashboard, provenance viewer, execution state, project
+  creator. A workspace chooses which stations are enabled, and the owner can
+  define new stations from the plugin manager (＋ New station) — a pure
+  wiring row, no code.
 - **Contributions** (`plugin_kind='contribution'`) — behaviors coded once in
   `public/contrib/*.js` (filesystem-tree, markdown-editor,
   dual-document-view, diff-renderer, card-rail, amendment-editor,
   revision-timeline, actor-filter, provenance-block, state-badge,
-  promotion-control, candidate-list, validation-result, project-create-form,
-  statistics-view, execution-state-view). Stations compose them; no
+  promotion-control (validation language; Promote appears exactly once),
+  candidate-list (validation queue card wall), decision-controls,
+  validation-result, label-editor (dialog from the tree; labels/path_labels in
+  the crosswalk), project-create-form, statistics-view,
+  execution-state-view). Stations compose them; no
   contribution is copied into two stations, and contributions talk only
   through the kernel bus and services — never by importing each other.
 
@@ -77,7 +84,14 @@ npm test
 npm start
 ```
 
-Open `http://127.0.0.1:8787`, select **Add path**, and register any existing absolute folder.
+Open `http://127.0.0.1:8787` and select **＋ Workspace** — name a folder,
+create it or register it as-is. A fresh workspace enables nothing; pick
+stations in **Plugins ⚙**.
+
+The `revision` service proxies transcript sessions/cards read-only from the
+Revision Center at :8880 (`REVISION_CENTER_BASE` to override) and degrades to
+empty answers with a note when it is down. Amendments and decisions always
+land in this app's own store.
 
 The control database defaults to:
 

@@ -449,6 +449,26 @@ export class ControlStore {
     }
   }
 
+  // An owner-defined station: a ui_plugins row like any shipped station, so
+  // the kernel renders it and the plugin manager wires it — domain-specific
+  // behavior arrives by choosing contributions, not by writing a component.
+  // Catalog sync never touches it (sync only upserts declared ids).
+  defineStation({ id, label, description = '', layout = 'rail-main-side', icon = '★' }) {
+    if (!id || !/^[a-z0-9][a-z0-9-]*$/.test(id)) throw new Error('Station ids: lowercase letters, digits, dashes');
+    if (!label) throw new Error('A station needs a label');
+    const layouts = { main: ['main'], 'rail-main': ['rail', 'main'], 'main-side': ['main', 'side'], 'rail-main-side': ['rail', 'main', 'side'] };
+    if (!layouts[layout]) throw new Error(`Unknown layout '${layout}' (one of: ${Object.keys(layouts).join(', ')})`);
+    const existing = this.db.prepare('SELECT plugin_id, plugin_kind FROM ui_plugins WHERE plugin_id=?').get(id);
+    if (existing && existing.plugin_kind !== 'station') throw new Error(`The id '${id}' already names a ${existing.plugin_kind}`);
+    const manifest = JSON.stringify({ description, layout, slots: layouts[layout], icon, custom: true });
+    this.db.prepare(`
+      INSERT INTO ui_plugins(plugin_id,plugin_kind,label,version,client_entry,server_entry,manifest_json,enabled)
+      VALUES(?,?,?,?,NULL,NULL,?,1)
+      ON CONFLICT(plugin_id) DO UPDATE SET label=excluded.label, manifest_json=excluded.manifest_json
+    `).run(id, 'station', label, '1.0.0', manifest);
+    return this.db.prepare('SELECT * FROM ui_plugins WHERE plugin_id=?').get(id);
+  }
+
   stationContributions(stationId) {
     return this.db.prepare(`
       SELECT sc.*, up.label, up.client_entry, up.manifest_json
