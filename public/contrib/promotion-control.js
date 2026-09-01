@@ -1,6 +1,7 @@
-// Contribution: governed lifecycle controls. Validated requires deterministic
-// validator receipts (the server mints them); promoted requires a human and
-// freezes the exact bytes. Errors surface verbatim — no state is faked.
+// Contribution: governed lifecycle controls, in validation language. Getting
+// validated requires deterministic validator receipts (the server mints
+// them). "Promote" is the one place that word appears: validated bytes →
+// promoted authority, human-only, exact SHA frozen. Errors surface verbatim.
 export function mount(el, ctx) {
   async function paint() {
     const f = ctx.selection;
@@ -8,15 +9,15 @@ export function mount(el, ctx) {
     const card = await ctx.action('governance', 'card', { path: f.path });
     const state = card.artifact?.state || 'working';
     const next = {
-      working: [['candidate', 'Make candidate']],
-      candidate: [['validated', 'Validate (mints receipts)'], ['working', 'Back to working']],
+      working: [['candidate', 'Submit as candidate']],
+      candidate: [['validated', 'Run validation (mints receipts)'], ['working', 'Back to working']],
       validated: [['promoted', 'Promote (human, freezes bytes)'], ['candidate', 'Back to candidate']],
       promoted: [['superseded', 'Mark superseded']],
       superseded: [['archived', 'Archive']],
       archived: []
     }[state] || [];
     el.innerHTML = `
-      <div class="card"><h3>Promotion</h3>
+      <div class="card"><h3>Validation</h3>
         <div class="muted" style="margin-bottom:6px">Governs this app's own artifact registry. The book promotion center at :8860 is a separate system.</div>
         <div class="keyval"><div class="key">State</div><div><span class="badge ${ctx.esc(state)}">${ctx.esc(state)}</span></div></div>
         ${card.promoted ? `<div class="keyval"><div class="key">Frozen</div><div class="mono">${ctx.esc(card.promoted.checksum.slice(0, 16))}… · ${ctx.esc(card.promoted.created_at)}</div></div>` : ''}

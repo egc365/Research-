@@ -105,3 +105,23 @@ test('a wiring row can be disabled and restored without touching its neighbors',
   const restored = store.stationContributions('revision-center').find(r => r.contribution_id === 'card-rail');
   assert.equal(restored.config.source, 'transcript');
 });
+
+test('validation-center replaces governance-center with shared components configured per station', t => {
+  const { store } = freshStore(t);
+  store.syncCatalog(catalogRows([]));
+  store.retirePlugins(['governance-center']);
+  store.seedStationWiring(defaultWiring);
+  assert.ok(!store.listCatalog().some(r => r.plugin_id === 'governance-center'));
+  const wired = store.stationContributions('validation-center');
+  const main = wired.filter(r => r.slot_name === 'main');
+  assert.deepEqual(main.map(r => r.contribution_id), ['dual-document-view', 'diff-renderer', 'validation-result']);
+  assert.equal(main[0].config.base, 'promoted'); // the frozen bytes, not git
+  assert.equal(main[1].config.base, 'promoted');
+  const side = wired.filter(r => r.slot_name === 'side').map(r => r.contribution_id);
+  assert.deepEqual(side, ['state-badge', 'provenance-block', 'promotion-control']);
+  // one diff renderer, one dual view, one provenance renderer in the catalog
+  const catalog = store.listCatalog().filter(r => r.plugin_kind === 'contribution').map(r => r.plugin_id);
+  for (const id of ['diff-renderer', 'dual-document-view', 'provenance-block']) {
+    assert.equal(catalog.filter(x => x === id).length, 1);
+  }
+});

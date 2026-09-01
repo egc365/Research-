@@ -27,10 +27,10 @@ export const stations = [
     }
   },
   {
-    id: 'governance-center', label: 'Governance center', version: '1.0.0',
+    id: 'validation-center', label: 'Validation center', version: '1.0.0',
     manifest: {
-      description: 'Move artifacts through working → candidate → validated → promoted. Validation receipts are minted by deterministic validators; promotion is human-only.',
-      layout: 'rail-main-side', slots: ['rail', 'main', 'side'], icon: '⚖'
+      description: 'Review candidates and validated artifacts: queue of cards, base vs candidate side by side, shared diff, receipts and provenance. Promote is the single final verb — validated bytes to promoted authority, human-only.',
+      layout: 'rail-main-side', slots: ['rail', 'main', 'side'], icon: '✅'
     }
   },
   {
@@ -75,8 +75,8 @@ export const contributions = [
   { id: 'actor-filter',       label: 'Actor filter',       entry: '/contrib/actor-filter.js',       description: 'Narrow event views to one actor (human, agent, filesystem, validator).' },
   { id: 'provenance-block',   label: 'Provenance',         entry: '/contrib/provenance-block.js',   description: 'Registry row for the selected file: state, exact SHA-256, run and span ids, timestamps.' },
   { id: 'state-badge',        label: 'State badge',        entry: '/contrib/state-badge.js',        description: 'The lifecycle state of the selected file, colored, with its allowed next states.' },
-  { id: 'promotion-control',  label: 'Promotion',          entry: '/contrib/promotion-control.js',  description: 'Candidate → validated → promoted controls. Validated requires receipts; promoted requires a human.' },
-  { id: 'candidate-list',     label: 'Candidates',         entry: '/contrib/candidate-list.js',     description: 'Registered artifacts grouped by lifecycle state; clicking selects the file.' },
+  { id: 'promotion-control',  label: 'Validation controls', entry: '/contrib/promotion-control.js', description: 'Submit as candidate → run validation (mints receipts) → Promote. Promote is the single final verb: validated bytes to promoted authority, human-only.' },
+  { id: 'candidate-list',     label: 'Validation queue',   entry: '/contrib/candidate-list.js',     description: 'Card wall of registered artifacts by lifecycle state — path, SHAs, run/span, drift; clicking selects the file.' },
   { id: 'validation-result',  label: 'Validation',         entry: '/contrib/validation-result.js',  description: 'Deterministic validator results for the selected file, check by check.' },
   { id: 'project-create-form',label: 'New project form',   entry: '/contrib/project-create-form.js',description: 'Name a project; the form writes the folder + README through the governed write path.' },
   { id: 'label-editor',      label: 'Label editor',       entry: '/contrib/label-editor.js',       description: 'Manage labels in a dialog opened from the tree (create, rename, recolor, describe, delete, assign) — stored in the SQLite crosswalk, owner-only writes. Occupies no screen space until opened.' },
@@ -97,10 +97,18 @@ export const defaultWiring = {
     main: ['dual-document-view'],
     side: [{ id: 'card-rail', config: { source: 'transcript' } }, 'amendment-editor', 'decision-controls', 'revision-timeline']
   },
-  'governance-center': {
+  'validation-center': {
     rail: ['candidate-list'],
-    main: ['validation-result'],
-    side: ['state-badge', 'promotion-control', 'provenance-block']
+    main: [
+      { id: 'dual-document-view', config: { base: 'promoted' } },
+      { id: 'diff-renderer', config: { base: 'promoted' } },
+      'validation-result'
+    ],
+    side: [
+      { id: 'state-badge', config: { openIn: ['revision-center', 'file-workbench'] } },
+      'provenance-block',
+      'promotion-control'
+    ]
   },
   'dashboard-viewer': { main: ['statistics-view'] },
   'provenance-viewer': {
@@ -115,7 +123,7 @@ export const defaultWiring = {
 // Ids the catalog used to ship and no longer does. Boot deletes their rows from
 // all three composition tables (ui_plugins, workspace_plugins,
 // station_contributions) so the plugin manager shows no ghosts.
-export const retired = ['label-designator'];
+export const retired = ['label-designator', 'governance-center'];
 
 export function catalogRows(serverPlugins = []) {
   const rows = [];
