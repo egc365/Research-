@@ -88,3 +88,12 @@ test('removeWorkspace unregisters everything but leaves the disk alone', t => {
   assert.deepEqual(store.pathLabels(ws), {});
   assert.throws(() => store.removeWorkspace(ws), /not registered/);
 });
+
+test('first sidebar edit seeds the defaults instead of swallowing them', t => {
+  const { store, ws } = freshStore(t);
+  store.sidebarDefaults = ['section-favorites', 'filesystem-tree', 'section-trash'];
+  store.setSidebarSection({ rootPath: ws, sectionId: 'section-trash', visible: false });
+  const rows = store.sidebarSections(ws, store.sidebarDefaults);
+  assert.deepEqual(rows.map(r => [r.section_id, r.visible]),
+    [['section-favorites', 1], ['filesystem-tree', 1], ['section-trash', 0]]);
+});

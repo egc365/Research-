@@ -22,6 +22,11 @@ export async function mount(el, ctx) {
     </div>`;
   const tree = el.querySelector('[data-role="tree"]');
   let labels = {};
+  let favorites = [];
+  let orderMap = {};
+  let draggedPath = null;
+
+  const parentOf = path => path.slice(0, path.lastIndexOf('/'));
 
   const memoryKey = () => 'ro.tree.' + (ctx.workspace?.root_path || '');
   const expanded = new Set(JSON.parse(localStorage.getItem(memoryKey()) || '[]'));
@@ -108,17 +113,76 @@ export async function mount(el, ctx) {
     });
   }
 
+  async function saveOrder(dirRelative, names) {
+    try {
+      await ctx.request('/api/ui-preferences', {
+        method: 'POST',
+        body: JSON.stringify({ rootPath: ctx.workspace.root_path, patch: { order: { ...orderMap, [dirRelative]: names } } })
+      });
+      ctx.bus.emit('prefs-changed');
+      repaint();
+    } catch (error) {
+      ctx.notify(`${error.data?.error || 'ERROR'}: ${error.message}`, 'error');
+    }
+  }
+
+  // Notion-style reorder: dragging over a sibling (same parent directory) shows
+  // an insert line instead of the move-into highlight; dropping writes the new
+  // name order into workspace preferences.
+  function attachReorder(row, entry, dirRelative) {
+    const clearMarks = () => row.classList.remove('insert-before', 'insert-after');
+    row.addEventListener('dragover', event => {
+      if (!draggedPath || draggedPath === entry.path) return;
+      if (parentOf(draggedPath) !== parentOf(entry.path)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      row.classList.remove('drop-target');
+      const rect = row.getBoundingClientRect();
+      const before = event.clientY < rect.top + rect.height / 2;
+      row.classList.toggle('insert-before', before);
+      row.classList.toggle('insert-after', !before);
+    });
+    row.addEventListener('dragleave', clearMarks);
+    row.addEventListener('drop', event => {
+      if (!draggedPath || draggedPath === entry.path) { clearMarks(); return; }
+      if (parentOf(draggedPath) !== parentOf(entry.path)) { clearMarks(); return; }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const before = row.classList.contains('insert-before');
+      clearMarks();
+      const dragName = draggedPath.split('/').pop();
+      const names = [...row.parentElement.querySelectorAll(':scope > .tree-row')]
+        .map(sibling => sibling.dataset.path.split('/').pop())
+        .filter(n => n !== dragName);
+      const at = names.indexOf(entry.name);
+      names.splice(before ? at : at + 1, 0, dragName);
+      saveOrder(dirRelative, names);
+    });
+  }
+
   async function loadDirectory(relativePath, container) {
-    const entries = await ctx.request(`/api/tree?root=${encodeURIComponent(ctx.workspace.root_path)}&path=${encodeURIComponent(relativePath)}`);
+    let entries = await ctx.request(`/api/tree?root=${encodeURIComponent(ctx.workspace.root_path)}&path=${encodeURIComponent(relativePath)}`);
+    const ordering = orderMap[relativePath];
+    if (Array.isArray(ordering) && ordering.length) {
+      const rank = new Map(ordering.map((n, i) => [n, i]));
+      entries = [
+        ...entries.filter(e => rank.has(e.name)).sort((a, b) => rank.get(a.name) - rank.get(b.name)),
+        ...entries.filter(e => !rank.has(e.name))
+      ];
+    }
     for (const entry of entries) {
       const row = document.createElement('div');
       row.className = 'tree-row';
       row.dataset.path = entry.path;
+      row.dataset.type = entry.type;
       row.draggable = true;
       row.addEventListener('dragstart', event => {
+        draggedPath = entry.path;
         event.dataTransfer.setData('text/ro-path', entry.path);
         event.dataTransfer.effectAllowed = 'move';
       });
+      row.addEventListener('dragend', () => { draggedPath = null; });
+      attachReorder(row, entry, relativePath);
       const isDir = entry.type === 'directory';
       const isOpen = isDir && expanded.has(entry.relativePath);
       const name = document.createElement('span');
@@ -154,6 +218,27 @@ export async function mount(el, ctx) {
         }
       };
       row.append(bin);
+
+      const star = document.createElement('button');
+      star.className = 'tree-add';
+      const isFavorite = favorites.includes(entry.path);
+      star.textContent = isFavorite ? '★' : '☆';
+      star.title = isFavorite ? `Remove ${entry.name} from favorites` : `Add ${entry.name} to favorites`;
+      star.onclick = async event => {
+        event.stopPropagation();
+        try {
+          const updated = isFavorite ? favorites.filter(p => p !== entry.path) : [...favorites, entry.path];
+          await ctx.request('/api/ui-preferences', {
+            method: 'POST',
+            body: JSON.stringify({ rootPath: ctx.workspace.root_path, patch: { favorites: updated } })
+          });
+          ctx.bus.emit('prefs-changed');
+          repaint();
+        } catch (error) {
+          ctx.notify(`${error.data?.error || 'ERROR'}: ${error.message}`, 'error');
+        }
+      };
+      row.append(star);
 
       container.append(row);
       if (isDir) {
@@ -202,11 +287,19 @@ export async function mount(el, ctx) {
   async function paint() {
     if (!ctx.workspace) { tree.innerHTML = '<div class="empty">No workspace.</div>'; return; }
     labels = await ctx.request(`/api/path-labels?root=${encodeURIComponent(ctx.workspace.root_path)}`).catch(() => ({}));
+    const prefs = await ctx.request(`/api/ui-preferences?root=${encodeURIComponent(ctx.workspace.root_path)}`).catch(() => ({}));
+    favorites = prefs.workspace?.favorites || [];
+    orderMap = prefs.workspace?.order || {};
     el.querySelector('[data-role="labels"]').hidden = !labelsWired();
     tree.replaceChildren();
     await loadDirectory('.', tree);
     markSelected();
   }
+
+  let painting = null;
+  const repaint = () => painting ??= paint()
+    .catch(e => ctx.notify(e.message, 'error'))
+    .finally(() => { painting = null; });
 
   el.querySelector('[data-role="new-file"]').onclick = () => createEntry('.', 'file');
   el.querySelector('[data-role="new-folder"]').onclick = () => createEntry('.', 'folder');
@@ -214,7 +307,26 @@ export async function mount(el, ctx) {
     ctx.bus.emit('open-labels', { path: ctx.selection?.path || null });
   acceptDrops(el.querySelector('[data-role="droproot"]'), '.');
   ctx.bus.on('selection', markSelected);
-  ctx.bus.on('fs-changed', () => paint().catch(e => ctx.notify(e.message, 'error')));
-  ctx.bus.on('labels-changed', () => paint().catch(e => ctx.notify(e.message, 'error')));
+  ctx.bus.on('fs-changed', repaint);
+  ctx.bus.on('labels-changed', repaint);
+  ctx.bus.on('prefs-changed', repaint);
+  ctx.bus.on('new-entry', () => createMenu(el.querySelector('.tree-toolbar'), '.'));
+  ctx.bus.on('reveal-path', ({ path } = {}) => {
+    const root = ctx.workspace?.root_path;
+    if (!root || !path || !path.startsWith(root + '/')) return;
+    const rel = path.slice(root.length + 1);
+    const parts = rel.split('/');
+    let prefix = '';
+    for (const part of parts) {
+      prefix = prefix ? `${prefix}/${part}` : part;
+      expanded.add(prefix);
+    }
+    rememberExpanded();
+    paint().then(() => {
+      const row = el.querySelector(`.tree-row[data-path="${CSS.escape(path)}"]`);
+      row?.scrollIntoView({ block: 'nearest' });
+      if (row?.dataset.type === 'file') ctx.selectFile(path).catch(() => {});
+    }).catch(e => ctx.notify(e.message, 'error'));
+  });
   await paint();
 }

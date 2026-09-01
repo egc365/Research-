@@ -792,6 +792,9 @@ export class ControlStore {
   setSidebarSection({ rootPath, sectionId, visible, collapsed, sortOrder, config }) {
     const root = path.resolve(rootPath);
     if (!sectionId) throw new Error('sectionId is required');
+    // A first edit must not swallow the defaults: seed them before writing,
+    // so hiding one section never becomes hiding all the others.
+    this.sidebarSections(root, this.sidebarDefaults || []);
     const existing = this.db.prepare('SELECT * FROM sidebar_sections WHERE workspace_root=? AND section_id=?').get(root, sectionId);
     this.db.prepare(`
       INSERT INTO sidebar_sections(workspace_root,section_id,visible,collapsed,sort_order,config_json)
