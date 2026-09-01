@@ -109,3 +109,52 @@ test('agent surface serves no UI', async () => {
     assert.equal((await fetch(`${f.ownerBase}/`)).status, 200);
   } finally { await f.close(); }
 });
+
+// ---- composable-ui-v1: composition, amendments and decisions keep the same
+// ---- surface discipline as promotion — owner-only writes are structural.
+
+test('composition writes are unreachable from the agent surface', async () => {
+  const f = await fixture();
+  try {
+    const { catalogRows, defaultWiring } = await import('../plugins/registry.mjs');
+    f.store.syncCatalog(catalogRows([]));
+    f.store.seedStationWiring(defaultWiring);
+
+    for (const [pathName, body] of [
+      ['/api/composition/workspace', { rootPath: f.root, pluginId: 'file-workbench' }],
+      ['/api/composition/station', { stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'card-rail' }]
+    ]) {
+      const denied = await call(f.agentBase, 'POST', pathName, body);
+      assert.equal(denied.status, 403);
+      assert.equal((await denied.json()).error, 'OWNER_SURFACE_ONLY');
+    }
+    // Nothing was enabled or rewired by the refused calls.
+    assert.equal(f.store.composition(f.root).enabled.length, 0);
+    assert.deepEqual(f.store.stationContributions('dashboard-viewer').map(r => r.contribution_id), ['statistics-view']);
+
+    // The owner surface can do both, and reading composition works on both surfaces.
+    assert.equal((await call(f.ownerBase, 'POST', '/api/composition/workspace', { rootPath: f.root, pluginId: 'file-workbench' })).status, 200);
+    const seenByAgent = await (await fetch(`${f.agentBase}/api/composition?root=${encodeURIComponent(f.root)}`)).json();
+    assert.equal(seenByAgent.enabled.length, 1);
+  } finally { await f.close(); }
+});
+
+test('agents may propose amendments (stamped agent); decisions are owner-only', async () => {
+  const f = await fixture();
+  try {
+    const proposed = await call(f.agentBase, 'POST', '/api/amendments', {
+      path: f.file, card: 'block-1', body: 'proposed rewording', actor: 'human' // claim is ignored
+    });
+    assert.equal(proposed.status, 201);
+    assert.equal((await proposed.json()).actor, 'agent');
+
+    const denied = await call(f.agentBase, 'POST', '/api/decision', { path: f.file, card: 'block-1', decision: 'accept' });
+    assert.equal(denied.status, 403);
+    assert.equal((await denied.json()).error, 'OWNER_SURFACE_ONLY');
+    assert.equal(f.store.listDecisions(f.file).entries.length, 0);
+
+    const recorded = await call(f.ownerBase, 'POST', '/api/decision', { path: f.file, card: 'block-1', decision: 'accept' });
+    assert.equal(recorded.status, 200);
+    assert.deepEqual((await recorded.json()).latestByCard, { 'block-1': 'accept' });
+  } finally { await f.close(); }
+});

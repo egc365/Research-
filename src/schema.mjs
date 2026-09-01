@@ -67,6 +67,52 @@ CREATE TABLE IF NOT EXISTS policy_rules (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS ui_plugins (
+  plugin_id TEXT PRIMARY KEY,
+  plugin_kind TEXT NOT NULL
+    CHECK(plugin_kind IN ('station','contribution','service')),
+  label TEXT NOT NULL,
+  version TEXT NOT NULL,
+  client_entry TEXT,
+  server_entry TEXT,
+  manifest_json TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS workspace_plugins (
+  workspace_root TEXT NOT NULL,
+  plugin_id TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 100,
+  config_json TEXT,
+  PRIMARY KEY(workspace_root, plugin_id)
+);
+
+CREATE TABLE IF NOT EXISTS station_contributions (
+  station_id TEXT NOT NULL,
+  slot_name TEXT NOT NULL,
+  contribution_id TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 100,
+  config_json TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY(station_id, slot_name, contribution_id)
+);
+
+CREATE TABLE IF NOT EXISTS amendments (
+  amendment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  path TEXT NOT NULL,
+  card TEXT NOT NULL DEFAULT '',
+  rev INTEGER NOT NULL,
+  body TEXT NOT NULL,
+  note TEXT,
+  actor TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(path, card, rev)
+);
+
+CREATE INDEX IF NOT EXISTS amendments_path_idx ON amendments(path, card, rev DESC);
 `;
 
 export const lifecycle = ['working', 'candidate', 'validated', 'promoted', 'superseded', 'archived'];

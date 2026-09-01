@@ -71,6 +71,54 @@ async function api(req, res, url, { store, plugins, surface }) {
     });
     return json(res, 200, { ...result, preflight });
   }
+  // ---- composition crosswalk (SQLite-backed routing/configuration) ----
+  if (req.method === 'GET' && url.pathname === '/api/composition') {
+    return json(res, 200, store.composition(url.searchParams.get('root')));
+  }
+  if (req.method === 'POST' && url.pathname === '/api/composition/workspace') {
+    // Composition is owner state: what renders where is never agent-writable.
+    if (surface === 'agent') return json(res, 403, { error: 'OWNER_SURFACE_ONLY', message: 'Workspace composition changes happen on the owner surface.' });
+    const body = await readJson(req);
+    return json(res, 200, store.setWorkspacePlugin({
+      rootPath: body.rootPath, pluginId: body.pluginId,
+      enabled: body.enabled !== false, sortOrder: body.sortOrder ?? 100, config: body.config || null
+    }));
+  }
+  if (req.method === 'POST' && url.pathname === '/api/composition/station') {
+    if (surface === 'agent') return json(res, 403, { error: 'OWNER_SURFACE_ONLY', message: 'Station wiring changes happen on the owner surface.' });
+    const body = await readJson(req);
+    return json(res, 200, store.setStationContribution({
+      stationId: body.stationId, slotName: body.slotName, contributionId: body.contributionId,
+      sortOrder: body.sortOrder ?? 100, config: body.config || null,
+      enabled: body.enabled !== false, remove: body.remove === true
+    }));
+  }
+
+  // ---- amendments (append-only proposals) and record-only decisions ----
+  if (req.method === 'GET' && url.pathname === '/api/amendments') {
+    return json(res, 200, store.listAmendments(url.searchParams.get('path'), url.searchParams.get('card')));
+  }
+  if (req.method === 'POST' && url.pathname === '/api/amendments') {
+    // Agents may propose amendments; the surface stamps their identity.
+    const body = enforceSurfaceActor(surface, await readJson(req));
+    return json(res, 201, store.appendAmendment({
+      filePath: body.path, card: body.card || '', body: body.body,
+      note: body.note || null, actor: body.actor || 'human'
+    }));
+  }
+  if (req.method === 'GET' && url.pathname === '/api/decisions') {
+    return json(res, 200, store.listDecisions(url.searchParams.get('path')));
+  }
+  if (req.method === 'POST' && url.pathname === '/api/decision') {
+    // Review verdicts are the owner's; the agent port cannot record one.
+    if (surface === 'agent') return json(res, 403, { error: 'OWNER_SURFACE_ONLY', message: 'Decisions are recorded on the owner surface.' });
+    const body = await readJson(req);
+    return json(res, 200, store.recordDecision({
+      filePath: body.path, card: body.card || '', decision: body.decision,
+      note: body.note || null, actor: body.actor || 'human'
+    }));
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/plugins') return json(res, 200, plugins.manifest());
   const match = url.pathname.match(/^\/api\/plugins\/([^/]+)\/action$/);
   if (req.method === 'POST' && match) {

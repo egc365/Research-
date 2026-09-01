@@ -14,6 +14,13 @@ const store = new ControlStore(dbPath);
 const plugins = new PluginHost({ store, pluginDir: path.join(here, 'plugins', 'server') });
 await plugins.load();
 
+// Sync the declared catalog into the SQLite crosswalk. Owner state survives:
+// enabled flags are never overwritten, and default station wiring is seeded
+// only for stations with no wiring rows at all.
+const { catalogRows, defaultWiring } = await import('./plugins/registry.mjs');
+store.syncCatalog(catalogRows(plugins.manifest()));
+store.seedStationWiring(defaultWiring);
+
 // Two surfaces, one store. The owner port serves the UI and honors the request's
 // actor. The agent port is API-only and forces actor=agent at the boundary, so
 // promotion (human-only in the store) is structurally unreachable from it.

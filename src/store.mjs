@@ -378,6 +378,177 @@ export class ControlStore {
     this.appendEvent({ filePath: target, eventType: 'TRACE_BINDING', checksum: artifact.checksum, actor, runId, spanId });
     return this.getArtifact(target);
   }
+
+  // ---------------------------------------------------------------- composition
+  // SQLite is the composition crosswalk: which plugins exist (ui_plugins),
+  // which stations a workspace enables (workspace_plugins), and which
+  // contributions fill each station slot (station_contributions). Routing and
+  // configuration only — application content never lives in these tables.
+
+  syncCatalog(rows) {
+    const upsert = this.db.prepare(`
+      INSERT INTO ui_plugins(plugin_id,plugin_kind,label,version,client_entry,server_entry,manifest_json,enabled)
+      VALUES(?,?,?,?,?,?,?,1)
+      ON CONFLICT(plugin_id) DO UPDATE SET
+        plugin_kind=excluded.plugin_kind, label=excluded.label, version=excluded.version,
+        client_entry=excluded.client_entry, server_entry=excluded.server_entry,
+        manifest_json=excluded.manifest_json
+      -- enabled deliberately untouched: an owner disable survives restarts.
+    `);
+    for (const r of rows) {
+      upsert.run(r.plugin_id, r.plugin_kind, r.label, r.version, r.client_entry, r.server_entry, r.manifest_json);
+    }
+    return this.listCatalog();
+  }
+
+  listCatalog() {
+    return this.db.prepare('SELECT * FROM ui_plugins ORDER BY plugin_kind, label').all()
+      .map(row => ({ ...row, manifest: JSON.parse(row.manifest_json || '{}') }));
+  }
+
+  seedStationWiring(defaultWiring) {
+    const count = this.db.prepare('SELECT COUNT(*) AS n FROM station_contributions WHERE station_id=?');
+    const insert = this.db.prepare(`
+      INSERT OR IGNORE INTO station_contributions(station_id,slot_name,contribution_id,sort_order,config_json,enabled)
+      VALUES(?,?,?,?,NULL,1)
+    `);
+    for (const [stationId, slots] of Object.entries(defaultWiring)) {
+      if (count.get(stationId).n > 0) continue; // owner wiring survives restarts
+      for (const [slotName, contributionIds] of Object.entries(slots)) {
+        contributionIds.forEach((cid, i) => insert.run(stationId, slotName, cid, (i + 1) * 10));
+      }
+    }
+  }
+
+  stationContributions(stationId) {
+    return this.db.prepare(`
+      SELECT sc.*, up.label, up.client_entry, up.manifest_json
+      FROM station_contributions sc
+      JOIN ui_plugins up ON up.plugin_id = sc.contribution_id
+      WHERE sc.station_id=? AND sc.enabled=1 AND up.enabled=1
+      ORDER BY sc.slot_name, sc.sort_order, sc.contribution_id
+    `).all(stationId).map(row => ({ ...row, config: row.config_json ? JSON.parse(row.config_json) : {} }));
+  }
+
+  setStationContribution({ stationId, slotName, contributionId, sortOrder = 100, config = null, enabled = true, remove = false }) {
+    if (!stationId || !slotName || !contributionId) throw new Error('stationId, slotName and contributionId are required');
+    if (remove) {
+      this.db.prepare('DELETE FROM station_contributions WHERE station_id=? AND slot_name=? AND contribution_id=?')
+        .run(stationId, slotName, contributionId);
+      return { removed: true };
+    }
+    const station = this.db.prepare("SELECT plugin_id, manifest_json FROM ui_plugins WHERE plugin_id=? AND plugin_kind='station'").get(stationId);
+    if (!station) throw new Error(`Unknown station: ${stationId}`);
+    const slots = JSON.parse(station.manifest_json || '{}').slots || [];
+    if (!slots.includes(slotName)) throw new Error(`Station ${stationId} has no slot '${slotName}' (slots: ${slots.join(', ')})`);
+    const contribution = this.db.prepare("SELECT plugin_id FROM ui_plugins WHERE plugin_id=? AND plugin_kind='contribution'").get(contributionId);
+    if (!contribution) throw new Error(`Unknown contribution: ${contributionId}`);
+    this.db.prepare(`
+      INSERT INTO station_contributions(station_id,slot_name,contribution_id,sort_order,config_json,enabled)
+      VALUES(?,?,?,?,?,?)
+      ON CONFLICT(station_id,slot_name,contribution_id) DO UPDATE SET
+        sort_order=excluded.sort_order, config_json=excluded.config_json, enabled=excluded.enabled
+    `).run(stationId, slotName, contributionId, sortOrder, config ? JSON.stringify(config) : null, enabled ? 1 : 0);
+    return this.db.prepare('SELECT * FROM station_contributions WHERE station_id=? AND slot_name=? AND contribution_id=?')
+      .get(stationId, slotName, contributionId);
+  }
+
+  workspacePlugins(rootPath) {
+    return this.db.prepare(`
+      SELECT wp.*, up.label, up.plugin_kind, up.manifest_json
+      FROM workspace_plugins wp
+      JOIN ui_plugins up ON up.plugin_id = wp.plugin_id
+      WHERE wp.workspace_root=? AND wp.enabled=1 AND up.enabled=1
+      ORDER BY wp.sort_order, up.label
+    `).all(path.resolve(rootPath)).map(row => ({ ...row, manifest: JSON.parse(row.manifest_json || '{}') }));
+  }
+
+  setWorkspacePlugin({ rootPath, pluginId, enabled = true, sortOrder = 100, config = null }) {
+    const root = path.resolve(rootPath);
+    if (!this.getWorkspace(root)) throw new Error('Workspace is not registered');
+    if (!this.db.prepare('SELECT plugin_id FROM ui_plugins WHERE plugin_id=?').get(pluginId)) {
+      throw new Error(`Unknown plugin: ${pluginId}`);
+    }
+    this.db.prepare(`
+      INSERT INTO workspace_plugins(workspace_root,plugin_id,enabled,sort_order,config_json)
+      VALUES(?,?,?,?,?)
+      ON CONFLICT(workspace_root,plugin_id) DO UPDATE SET
+        enabled=excluded.enabled, sort_order=excluded.sort_order, config_json=excluded.config_json
+    `).run(root, pluginId, enabled ? 1 : 0, sortOrder, config ? JSON.stringify(config) : null);
+    return this.db.prepare('SELECT * FROM workspace_plugins WHERE workspace_root=? AND plugin_id=?').get(root, pluginId);
+  }
+
+  composition(rootPath = null) {
+    const catalog = this.listCatalog();
+    const enabled = rootPath ? this.workspacePlugins(rootPath) : [];
+    const stations = {};
+    for (const row of enabled.filter(r => r.plugin_kind === 'station')) {
+      stations[row.plugin_id] = this.stationContributions(row.plugin_id);
+    }
+    return { catalog, enabled, stations };
+  }
+
+  // ---------------------------------------------------------------- amendments
+  // An amendment is an append-only proposal against one card (block) of one
+  // document. rev is the next number for (path, card); nothing here ever
+  // rewrites a prior rev, and nothing here touches the document itself.
+
+  appendAmendment({ filePath, card = '', body, note = null, actor = 'human' }) {
+    if (!filePath) throw new Error('filePath is required');
+    if (typeof body !== 'string' || !body.length) throw new Error('Amendment body must be non-empty text');
+    const target = path.resolve(filePath);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const current = this.db.prepare('SELECT COALESCE(MAX(rev),0) AS r FROM amendments WHERE path=? AND card=?').get(target, card);
+      const rev = current.r + 1;
+      const ts = now();
+      this.db.prepare(`
+        INSERT INTO amendments(path,card,rev,body,note,actor,sha256,created_at)
+        VALUES(?,?,?,?,?,?,?,?)
+      `).run(target, card, rev, body, note, actor, sha256(Buffer.from(body, 'utf8')), ts);
+      this.db.exec('COMMIT');
+      return this.db.prepare('SELECT * FROM amendments WHERE path=? AND card=? AND rev=?').get(target, card, rev);
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  listAmendments(filePath, card = null) {
+    const target = path.resolve(filePath);
+    const rows = card === null
+      ? this.db.prepare('SELECT * FROM amendments WHERE path=? ORDER BY card, rev').all(target)
+      : this.db.prepare('SELECT * FROM amendments WHERE path=? AND card=? ORDER BY rev').all(target, card);
+    const latestRevByCard = {};
+    for (const row of rows) latestRevByCard[row.card] = Math.max(latestRevByCard[row.card] || 0, row.rev);
+    return { path: target, entries: rows, latestRevByCard };
+  }
+
+  // Decisions are record-only review verdicts: accept | needs-more-work.
+  // They move nothing and change nothing; they land in the event ledger.
+  recordDecision({ filePath, card = '', decision, note = null, actor = 'human' }) {
+    if (!['accept', 'needs-more-work'].includes(decision)) {
+      const error = new Error(`'${decision}' is not a decision this app records. The two decisions are accept and needs-more-work.`);
+      error.code = 'UNKNOWN_DECISION';
+      throw error;
+    }
+    const target = path.resolve(filePath);
+    const artifact = this.getArtifact(target);
+    this.appendEvent({
+      filePath: target, eventType: 'DECISION', checksum: artifact?.checksum || null, actor,
+      metadata: { card, decision, note, effect: 'record only — this decision moves and changes nothing' }
+    });
+    return this.listDecisions(target);
+  }
+
+  listDecisions(filePath) {
+    const target = path.resolve(filePath);
+    const rows = this.db.prepare("SELECT * FROM artifact_events WHERE path=? AND event_type='DECISION' ORDER BY event_id").all(target)
+      .map(row => ({ ...row, metadata: row.metadata_json ? JSON.parse(row.metadata_json) : {} }));
+    const latestByCard = {};
+    for (const row of rows) latestByCard[row.metadata.card || ''] = row.metadata.decision;
+    return { path: target, entries: rows, latestByCard };
+  }
 }
 
 export { sha256 };
