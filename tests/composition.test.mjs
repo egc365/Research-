@@ -62,7 +62,9 @@ test('owner wiring edits survive a reseed', t => {
   const { store } = freshStore(t);
   store.syncCatalog(catalogRows([]));
   store.seedStationWiring(defaultWiring);
-  store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'statistics-view', remove: true });
+  for (const id of ['launchpad', 'inbox', 'statistics-view']) {
+    store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: id, remove: true });
+  }
   store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'candidate-list', sortOrder: 10 });
   store.seedStationWiring(defaultWiring); // a restart
   const wired = store.stationContributions('dashboard-viewer').map(r => r.contribution_id);

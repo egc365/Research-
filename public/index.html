@@ -7,20 +7,32 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <!-- The kernel owns only this frame: workspace selection, the plugin
-       manager entry point, the station switcher, and slot containers.
-       Everything with domain identity arrives as a plugin. -->
+  <!-- Kernel chrome only: the sidebar frame (sections arrive as plugins),
+       station switcher, plugin manager + customize entry points, status.
+       Everything with domain identity mounts as a plugin. -->
   <header class="topbar">
+    <button id="toggleSidebar" class="sidebar-toggle" title="Collapse or reopen the sidebar">☰</button>
     <div class="brand">Research Operations</div>
-    <div class="kernel-controls">
-      <select id="workspaceSelect" aria-label="Workspace"></select>
-      <button id="newWorkspace" class="primary" title="Create a workspace — a composition profile over a folder">＋ Workspace</button>
-      <nav id="stationBar" class="station-bar" aria-label="Stations"></nav>
-      <button id="openPluginManager" class="plugins-btn">Plugins ⚙</button>
-    </div>
+    <nav id="stationBar" class="station-bar" aria-label="Stations"></nav>
+    <button id="openCustomize" class="plugins-btn" title="Appearance, sidebar and dashboard preferences for this workspace">Customize</button>
+    <button id="openPluginManager">Plugins ⚙</button>
   </header>
 
-  <main id="stage" class="stage"></main>
+  <div id="shell" class="shell">
+    <aside id="sidebar" class="sidebar" aria-label="Workspace navigation">
+      <div class="sidebar-head">
+        <select id="workspaceSelect" aria-label="Workspace"></select>
+        <button id="newWorkspace" title="Create a workspace — a composition profile over a folder">＋</button>
+      </div>
+      <div id="sidebarBody" class="sidebar-body"></div>
+      <div class="sidebar-foot">
+        <button id="sidebarNew" title="Create a file or folder">＋ New</button>
+        <button id="sidebarPlugins" title="Enable stations and wire behaviors">Plugins</button>
+      </div>
+    </aside>
+    <div id="sidebarResizer" class="sidebar-resizer" title="Drag to resize the sidebar"></div>
+    <main id="stage" class="stage"></main>
+  </div>
 
   <footer id="statusBar" class="statusbar">Ready.</footer>
 
@@ -30,6 +42,14 @@
       <button id="closePluginManager">Close</button>
     </div>
     <div id="pluginManagerBody" class="pm-body"></div>
+  </dialog>
+
+  <dialog id="customizeDialog" class="plugin-manager">
+    <div class="pm-head">
+      <strong>Customize workspace</strong>
+      <button id="closeCustomize" type="button">Close</button>
+    </div>
+    <div id="customizeBody" class="pm-body"></div>
   </dialog>
 
   <dialog id="workspaceDialog" class="plugin-manager">

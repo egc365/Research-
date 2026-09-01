@@ -107,6 +107,40 @@ async function api(req, res, url, { store, plugins, surface }) {
     }));
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/fs/trash') {
+    return json(res, 200, store.listTrash(url.searchParams.get('root')));
+  }
+  if (req.method === 'POST' && url.pathname === '/api/fs/restore') {
+    if (surface === 'agent') return json(res, 403, { error: 'OWNER_SURFACE_ONLY', message: 'Restoring from the trash happens on the owner surface.' });
+    const body = await readJson(req);
+    return json(res, 200, store.restoreEntry({ rootPath: body.rootPath, trashPath: body.path, actor: body.actor || 'human' }));
+  }
+
+  // ---- appearance + navigation preferences (validated JSON, owner state) ----
+  if (req.method === 'GET' && url.pathname === '/api/ui-preferences') {
+    const root = url.searchParams.get('root');
+    return json(res, 200, { user: store.uiPreferences(null), workspace: root ? store.uiPreferences(root) : {} });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/ui-preferences') {
+    if (surface === 'agent') return json(res, 403, { error: 'OWNER_SURFACE_ONLY', message: 'Appearance and navigation are owner preferences.' });
+    const body = await readJson(req);
+    return json(res, 200, store.setUiPreferences({
+      rootPath: body.scope === 'user' ? null : body.rootPath,
+      patch: body.patch || {}, reset: body.reset === true
+    }));
+  }
+  if (req.method === 'GET' && url.pathname === '/api/sidebar') {
+    return json(res, 200, store.sidebarSections(url.searchParams.get('root'), store.sidebarDefaults || []));
+  }
+  if (req.method === 'POST' && url.pathname === '/api/sidebar') {
+    if (surface === 'agent') return json(res, 403, { error: 'OWNER_SURFACE_ONLY', message: 'Sidebar layout is an owner preference.' });
+    const body = await readJson(req);
+    return json(res, 200, store.setSidebarSection({
+      rootPath: body.rootPath, sectionId: body.sectionId,
+      visible: body.visible, collapsed: body.collapsed, sortOrder: body.sortOrder, config: body.config
+    }));
+  }
+
   // ---- composition crosswalk (SQLite-backed routing/configuration) ----
   if (req.method === 'GET' && url.pathname === '/api/composition') {
     return json(res, 200, store.composition(url.searchParams.get('root')));

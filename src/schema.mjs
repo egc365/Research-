@@ -114,6 +114,31 @@ CREATE TABLE IF NOT EXISTS amendments (
 
 CREATE INDEX IF NOT EXISTS amendments_path_idx ON amendments(path, card, rev DESC);
 
+-- Presentation and navigation preferences: validated JSON blobs, never one
+-- column per CSS property. Composition answers "what can this workspace do";
+-- these answer "what does it look like" and "how is it organized for me".
+CREATE TABLE IF NOT EXISTS workspace_ui_preferences (
+  workspace_root TEXT PRIMARY KEY,
+  preference_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_ui_preferences (
+  key TEXT PRIMARY KEY,
+  value_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sidebar_sections (
+  workspace_root TEXT NOT NULL,
+  section_id TEXT NOT NULL,
+  visible INTEGER NOT NULL DEFAULT 1,
+  collapsed INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 100,
+  config_json TEXT,
+  PRIMARY KEY(workspace_root, section_id)
+);
+
 CREATE TABLE IF NOT EXISTS labels (
   name TEXT PRIMARY KEY,
   color TEXT NOT NULL DEFAULT '#4fa3ff',

@@ -691,6 +691,167 @@ export class ControlStore {
     return { path: target, label, assigned: true };
   }
 
+  // ------------------------------------------------- appearance + navigation
+  // Validated JSON preferences. Workspace scope wins over user scope wins over
+  // defaults; the kernel resolves that — here we only store clean values.
+
+  static #prefValidators = {
+    theme: v => ['light', 'dark', 'system'].includes(v),
+    density: v => ['compact', 'comfortable'].includes(v),
+    accent: v => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v),
+    radius: v => ['rounded', 'square'].includes(v),
+    fontSize: v => Number.isFinite(v) && v >= 11 && v <= 20,
+    editorFontSize: v => Number.isFinite(v) && v >= 11 && v <= 22,
+    sidebar: v => v && typeof v === 'object' && !Array.isArray(v)
+      && (v.width === undefined || (Number.isFinite(v.width) && v.width >= 180 && v.width <= 560))
+      && (v.collapsed === undefined || typeof v.collapsed === 'boolean'),
+    paneSplit: v => Number.isFinite(v) && v >= 20 && v <= 80,
+    dashboard: v => v && typeof v === 'object' && !Array.isArray(v),
+    favorites: v => Array.isArray(v) && v.every(x => typeof x === 'string'),
+    order: v => v && typeof v === 'object' && !Array.isArray(v)
+      && Object.values(v).every(list => Array.isArray(list) && list.every(x => typeof x === 'string')),
+    links: v => Array.isArray(v) && v.every(x => x && typeof x.label === 'string' && typeof x.url === 'string'),
+    icon: v => typeof v === 'string' && v.length <= 8
+  };
+
+  static cleanPreferences(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Preferences must be a JSON object');
+    const clean = {};
+    for (const [key, value] of Object.entries(raw)) {
+      const validator = ControlStore.#prefValidators[key];
+      if (!validator) continue; // unknown keys are dropped, never stored
+      if (!validator(value)) throw new Error(`Preference '${key}' has an invalid value`);
+      clean[key] = value;
+    }
+    return clean;
+  }
+
+  uiPreferences(rootPath = null) {
+    const row = rootPath
+      ? this.db.prepare('SELECT preference_json AS j FROM workspace_ui_preferences WHERE workspace_root=?').get(path.resolve(rootPath))
+      : this.db.prepare("SELECT value_json AS j FROM user_ui_preferences WHERE key='ui'").get();
+    try { return row ? JSON.parse(row.j) : {}; } catch { return {}; }
+  }
+
+  setUiPreferences({ rootPath = null, patch = null, reset = false }) {
+    const ts = now();
+    if (reset) {
+      if (rootPath) this.db.prepare('DELETE FROM workspace_ui_preferences WHERE workspace_root=?').run(path.resolve(rootPath));
+      else this.db.prepare("DELETE FROM user_ui_preferences WHERE key='ui'").run();
+      return {};
+    }
+    const merged = ControlStore.cleanPreferences({ ...this.uiPreferences(rootPath), ...patch });
+    const json = JSON.stringify(merged);
+    if (rootPath) {
+      const root = path.resolve(rootPath);
+      if (!this.getWorkspace(root)) throw new Error('Workspace is not registered');
+      this.db.prepare(`
+        INSERT INTO workspace_ui_preferences(workspace_root,preference_json,updated_at) VALUES(?,?,?)
+        ON CONFLICT(workspace_root) DO UPDATE SET preference_json=excluded.preference_json, updated_at=excluded.updated_at
+      `).run(root, json, ts);
+    } else {
+      this.db.prepare(`
+        INSERT INTO user_ui_preferences(key,value_json,updated_at) VALUES('ui',?,?)
+        ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at
+      `).run(json, ts);
+    }
+    return merged;
+  }
+
+  sidebarSections(rootPath, defaults = []) {
+    const root = path.resolve(rootPath);
+    const count = this.db.prepare('SELECT COUNT(*) AS n FROM sidebar_sections WHERE workspace_root=?').get(root);
+    if (count.n === 0 && defaults.length) {
+      const insert = this.db.prepare(`
+        INSERT INTO sidebar_sections(workspace_root,section_id,visible,collapsed,sort_order,config_json)
+        VALUES(?,?,1,0,?,NULL)`);
+      defaults.forEach((id, i) => insert.run(root, id, (i + 1) * 10));
+    }
+    return this.db.prepare('SELECT * FROM sidebar_sections WHERE workspace_root=? ORDER BY sort_order, section_id').all(root)
+      .map(row => ({ ...row, config: row.config_json ? JSON.parse(row.config_json) : {} }));
+  }
+
+  setSidebarSection({ rootPath, sectionId, visible, collapsed, sortOrder, config }) {
+    const root = path.resolve(rootPath);
+    if (!sectionId) throw new Error('sectionId is required');
+    const existing = this.db.prepare('SELECT * FROM sidebar_sections WHERE workspace_root=? AND section_id=?').get(root, sectionId);
+    this.db.prepare(`
+      INSERT INTO sidebar_sections(workspace_root,section_id,visible,collapsed,sort_order,config_json)
+      VALUES(?,?,?,?,?,?)
+      ON CONFLICT(workspace_root,section_id) DO UPDATE SET
+        visible=excluded.visible, collapsed=excluded.collapsed,
+        sort_order=excluded.sort_order, config_json=excluded.config_json
+    `).run(root, sectionId,
+      (visible ?? (existing ? existing.visible === 1 : true)) ? 1 : 0,
+      (collapsed ?? (existing ? existing.collapsed === 1 : false)) ? 1 : 0,
+      sortOrder ?? existing?.sort_order ?? 100,
+      config !== undefined ? (config ? JSON.stringify(config) : null) : existing?.config_json ?? null);
+    return this.db.prepare('SELECT * FROM sidebar_sections WHERE workspace_root=? AND section_id=?').get(root, sectionId);
+  }
+
+  // ------------------------------------------------------------ trash + recent
+
+  listTrash(rootPath) {
+    const root = path.resolve(rootPath);
+    const trashDir = path.join(root, '.research-ops', 'trash');
+    if (!fs.existsSync(trashDir)) return [];
+    return fs.readdirSync(trashDir, { withFileTypes: true }).map(entry => {
+      const full = path.join(trashDir, entry.name);
+      const event = this.db.prepare("SELECT metadata_json, created_at FROM artifact_events WHERE path=? AND event_type='DELETE' ORDER BY event_id DESC").get(full);
+      let from = null;
+      try { from = event ? JSON.parse(event.metadata_json).from : null; } catch { from = null; }
+      return { name: entry.name, path: full, kind: entry.isDirectory() ? 'directory' : 'file', from, trashedAt: event?.created_at || null };
+    }).sort((a, b) => String(b.trashedAt).localeCompare(String(a.trashedAt)));
+  }
+
+  restoreEntry({ rootPath, trashPath, actor = 'human' }) {
+    const root = path.resolve(rootPath);
+    const source = this.assertInsideWorkspace(root, trashPath);
+    if (!source.startsWith(path.join(root, '.research-ops', 'trash') + path.sep)) throw new Error('Not a trash entry: ' + source);
+    if (!fs.existsSync(source)) throw new Error('No such trash entry: ' + source);
+    const event = this.db.prepare("SELECT metadata_json FROM artifact_events WHERE path=? AND event_type='DELETE' ORDER BY event_id DESC").get(source);
+    let target = null;
+    try { target = event ? JSON.parse(event.metadata_json).from : null; } catch { target = null; }
+    if (!target) target = path.join(root, path.basename(source).replace(/^[0-9T-]+Z?-/, ''));
+    if (fs.existsSync(target)) throw new Error('Cannot restore — something already exists at ' + target);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    const isDir = fs.statSync(source).isDirectory();
+    fs.renameSync(source, target);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const table of ['artifact_registry', 'path_labels', 'amendments', 'artifact_versions']) {
+        this.db.prepare(`UPDATE ${table} SET path=? WHERE path=?`).run(target, source);
+        if (isDir) {
+          this.db.prepare(`UPDATE ${table} SET path=? || substr(path, length(?)+1) WHERE path LIKE ? || '/%'`)
+            .run(target, source, source);
+        }
+      }
+      // Restored files come back as working: bytes are unchanged but their
+      // place in the lifecycle must be re-earned (promoted_checksum survives).
+      this.db.prepare("UPDATE artifact_registry SET state='working', updated_at=? WHERE path=? OR path LIKE ? || '/%'")
+        .run(now(), target, target);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      fs.renameSync(target, source);
+      throw error;
+    }
+    this.appendEvent({ filePath: target, eventType: 'RESTORE', actor, metadata: { from: source, kind: isDir ? 'directory' : 'file' } });
+    return { restored: true, from: source, path: target, kind: isDir ? 'directory' : 'file' };
+  }
+
+  recentActivity(rootPath, limit = 12) {
+    return this.db.prepare(`
+      SELECT e.path, MAX(e.event_id) AS last_event, e.event_type, e.actor, e.created_at
+      FROM artifact_events e
+      JOIN artifact_registry r ON r.path = e.path
+      WHERE r.workspace_root = ? AND r.path NOT LIKE ? || '/%'
+      GROUP BY e.path
+      ORDER BY last_event DESC
+      LIMIT ?
+    `).all(path.resolve(rootPath), path.join(path.resolve(rootPath), '.research-ops'), limit);
+  }
+
   // ---------------------------------------------------------------- amendments
   // An amendment is an append-only proposal against one card (block) of one
   // document. rev is the next number for (path, card); nothing here ever

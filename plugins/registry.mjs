@@ -13,17 +13,17 @@
 
 export const stations = [
   {
-    id: 'file-workbench', label: 'File workbench', version: '1.0.0',
+    id: 'file-workbench', label: 'File workbench', version: '1.1.0',
     manifest: {
-      description: 'Browse the workspace, edit a file, watch its lifecycle state and provenance.',
-      layout: 'rail-main-side', slots: ['rail', 'main', 'side'], icon: '🗂'
+      description: 'Edit the selected file, watch its lifecycle state and provenance. Navigation lives in the sidebar.',
+      layout: 'main-side', slots: ['main', 'side'], icon: '🗂'
     }
   },
   {
-    id: 'revision-center', label: 'Revision center', version: '1.0.0',
+    id: 'revision-center', label: 'Revision center', version: '1.1.0',
     manifest: {
-      description: 'Preserved vs new side by side, continuous diff, block cards, amendments as append-only revisions, accept / needs-more-work.',
-      layout: 'rail-main-side', slots: ['rail', 'main', 'side'], icon: '📝'
+      description: 'Preserved vs new side by side, block cards from the transcript index, amendments as append-only revisions, accept / needs-more-work.',
+      layout: 'main-side', slots: ['main', 'side'], icon: '📝'
     }
   },
   {
@@ -41,10 +41,10 @@ export const stations = [
     }
   },
   {
-    id: 'provenance-viewer', label: 'Provenance', version: '1.0.0',
+    id: 'provenance-viewer', label: 'Provenance', version: '1.1.0',
     manifest: {
       description: 'Who wrote what, when, under which run — the full event ledger for a file, filterable by actor.',
-      layout: 'rail-main-side', slots: ['rail', 'main', 'side'], icon: '🔗'
+      layout: 'main-side', slots: ['main', 'side'], icon: '🔗'
     }
   },
   {
@@ -79,8 +79,14 @@ export const contributions = [
   { id: 'candidate-list',     label: 'Validation queue',   entry: '/contrib/candidate-list.js',     description: 'Card wall of registered artifacts by lifecycle state — path, SHAs, run/span, drift; clicking selects the file.' },
   { id: 'validation-result',  label: 'Validation',         entry: '/contrib/validation-result.js',  description: 'Deterministic validator results for the selected file, check by check.' },
   { id: 'project-create-form',label: 'New project form',   entry: '/contrib/project-create-form.js',description: 'Name a project; the form writes the folder + README through the governed write path.' },
-  { id: 'label-editor',      label: 'Label editor',       entry: '/contrib/label-editor.js',       description: 'Manage labels in a dialog opened from the tree (create, rename, recolor, describe, delete, assign) — stored in the SQLite crosswalk, owner-only writes. Occupies no screen space until opened.' },
+  { id: 'label-editor',      label: 'Label editor',       entry: '/contrib/label-editor.js',       headless: true, description: 'Manage labels in a dialog opened from the tree (create, rename, recolor, describe, delete, assign) — stored in the SQLite crosswalk, owner-only writes. Occupies no screen space until opened.' },
   { id: 'statistics-view',    label: 'Statistics',         entry: '/contrib/statistics-view.js',    description: 'Counts by state, event type, actor, and the last promotions.' },
+  { id: 'launchpad',          label: 'Launchpad',          entry: '/contrib/launchpad.js',          description: 'Dashboard link hub: stations, workspaces, and the machine’s other programs as big cards. Per-workspace extra links come from the workspace preferences.' },
+  { id: 'inbox',              label: 'Inbox',              entry: '/contrib/inbox.js',              description: 'What needs the owner: candidates and validated artifacts awaiting a verdict, plus the latest activity.' },
+  { id: 'section-favorites',  label: 'Favorites',          entry: '/contrib/section-favorites.js',  description: 'Sidebar section: starred files and folders (star them in the tree).' },
+  { id: 'section-projects',   label: 'Projects',           entry: '/contrib/section-projects.js',   description: 'Sidebar section: folders labeled ‘project’, nested, click to reveal in Files.' },
+  { id: 'section-recent',     label: 'Recent',             entry: '/contrib/section-recent.js',     description: 'Sidebar section: last touched artifacts from the ledger.' },
+  { id: 'section-trash',      label: 'Trash',              entry: '/contrib/section-trash.js',      description: 'Sidebar section: trashed entries with one-click restore.' },
   { id: 'execution-state-view', label: 'Execution state',  entry: '/contrib/execution-state-view.js', description: 'Inspect and patch a run’s structured state with optimistic version checks.' }
 ];
 
@@ -88,12 +94,10 @@ export const contributions = [
 // station_contributions. Order inside a slot = sort_order steps of 10.
 export const defaultWiring = {
   'file-workbench': {
-    rail: ['filesystem-tree', 'label-editor'],
     main: ['markdown-editor', 'diff-renderer'],
     side: ['state-badge', 'provenance-block', 'revision-timeline']
   },
   'revision-center': {
-    rail: ['filesystem-tree'],
     main: ['dual-document-view'],
     side: [{ id: 'card-rail', config: { source: 'transcript' } }, 'amendment-editor', 'decision-controls', 'revision-timeline']
   },
@@ -110,9 +114,8 @@ export const defaultWiring = {
       'promotion-control'
     ]
   },
-  'dashboard-viewer': { main: ['statistics-view'] },
+  'dashboard-viewer': { main: ['launchpad', 'inbox', 'statistics-view'] },
   'provenance-viewer': {
-    rail: ['filesystem-tree'],
     main: ['revision-timeline'],
     side: ['actor-filter', 'provenance-block']
   },
@@ -125,6 +128,11 @@ export const defaultWiring = {
 // station_contributions) so the plugin manager shows no ghosts.
 export const retired = ['label-designator', 'governance-center'];
 
+// Default sidebar sections for a workspace with no sidebar_sections rows yet.
+// Sections are ordinary contributions (section-*) mounted by the kernel's
+// sidebar; the owner shows/hides/reorders them per workspace.
+export const sidebarDefaults = ['section-favorites', 'section-projects', 'filesystem-tree', 'section-recent', 'section-trash', 'label-editor'];
+
 export function catalogRows(serverPlugins = []) {
   const rows = [];
   for (const s of stations) {
@@ -133,7 +141,8 @@ export function catalogRows(serverPlugins = []) {
   }
   for (const c of contributions) {
     rows.push({ plugin_id: c.id, plugin_kind: 'contribution', label: c.label, version: c.version || '1.0.0',
-      client_entry: c.entry, server_entry: null, manifest_json: JSON.stringify({ description: c.description }) });
+      client_entry: c.entry, server_entry: null,
+      manifest_json: JSON.stringify({ description: c.description, ...(c.headless ? { headless: true } : {}) }) });
   }
   for (const p of serverPlugins) {
     // A server plugin and a station may share a name (revision-center vs the
