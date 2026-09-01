@@ -76,6 +76,20 @@ export const stations = [
     }
   },
   {
+    id: 'gpu-monitor', label: 'GPU governor', version: '1.0.0',
+    manifest: {
+      description: 'Read-only window onto the gpu-governor daemon: current GPU snapshot, allowlist rules (new config path first, legacy fallback), and the tail of the enforcement event log. Enforcement verbs stay on the :7890 dashboard.',
+      layout: 'main', slots: ['main'], icon: '🎛'
+    }
+  },
+  {
+    id: 'stt-monitor', label: 'Parakeet STT', version: '1.0.0',
+    manifest: {
+      description: 'Status of the local Parakeet speech-to-text service — up/down, model and config summary, raw status — with owner-only start/stop of listen mode.',
+      layout: 'main', slots: ['main'], icon: '🎙'
+    }
+  },
+  {
     id: 'project-creator', label: 'Project creator', version: '1.0.0',
     manifest: {
       description: 'Start a new project folder inside the workspace with a seeded README, registered in the ledger from its first byte.',
@@ -112,7 +126,9 @@ export const contributions = [
   { id: 'execution-state-view', label: 'Execution state',  entry: '/contrib/execution-state-view.js', description: 'Inspect and patch a run’s structured state with optimistic version checks.' },
   { id: 'tool-health-view',   label: 'Tool health',        entry: '/contrib/tool-health.js',        description: 'Port health board: probes the machine’s tools via the tool-health service and shows up/down with latency. Extra targets via wiring config { targets: [...] }.' },
   { id: 'transcript-search-view', label: 'Transcript search', entry: '/contrib/transcript-search.js', description: 'Bot cutover → session list → filtered deep search over native transcripts, via the transcript-search service.' },
-  { id: 'board-view',         label: 'Board',              entry: '/contrib/board-view.js',         description: 'Planning board over the workspace: group tiles laid out per orientation, breadcrumb drill-in, drag cards to reorder or move; file cards select the file, links open, notes edit inline.' }
+  { id: 'board-view',         label: 'Board',              entry: '/contrib/board-view.js',         description: 'Planning board over the workspace: group tiles laid out per orientation, breadcrumb drill-in, drag cards to reorder or move; file cards select the file, links open, notes edit inline.' },
+  { id: 'gpu-governor-view',  label: 'GPU governor',       entry: '/contrib/gpu-governor-view.js',  description: 'Governor board: current snapshot, allowlist rules + which path is live, recent enforcement events newest first, link to the :7890 dashboard. Event tail size via wiring config { eventLimit: N }.' },
+  { id: 'parakeet-view',      label: 'Parakeet STT',       entry: '/contrib/parakeet-view.js',      description: 'Parakeet status card: up/down chip, config summary, raw status JSON, owner-only start/stop listening buttons, 15s auto-refresh.' }
 ];
 
 // Default wiring, applied only when a station has zero rows in
@@ -147,6 +163,8 @@ export const defaultWiring = {
   'execution-state': { main: ['execution-state-view'] },
   'health-monitor': { main: ['tool-health-view'] },
   'transcript-review': { main: ['transcript-search-view'] },
+  'gpu-monitor': { main: ['gpu-governor-view'] },
+  'stt-monitor': { main: ['parakeet-view'] },
   'planning-board': { main: ['board-view'] },
   'project-creator': { main: ['project-create-form'] }
 };
