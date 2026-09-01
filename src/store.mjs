@@ -433,12 +433,18 @@ export class ControlStore {
     const count = this.db.prepare('SELECT COUNT(*) AS n FROM station_contributions WHERE station_id=?');
     const insert = this.db.prepare(`
       INSERT OR IGNORE INTO station_contributions(station_id,slot_name,contribution_id,sort_order,config_json,enabled)
-      VALUES(?,?,?,?,NULL,1)
+      VALUES(?,?,?,?,?,1)
     `);
     for (const [stationId, slots] of Object.entries(defaultWiring)) {
       if (count.get(stationId).n > 0) continue; // owner wiring survives restarts
       for (const [slotName, contributionIds] of Object.entries(slots)) {
-        contributionIds.forEach((cid, i) => insert.run(stationId, slotName, cid, (i + 1) * 10));
+        // An entry is either a bare contribution id or { id, config } when the
+        // station mounts a shared behavior with station-specific configuration.
+        contributionIds.forEach((entry, i) => {
+          const id = typeof entry === 'string' ? entry : entry.id;
+          const config = typeof entry === 'string' ? null : JSON.stringify(entry.config || {});
+          insert.run(stationId, slotName, id, (i + 1) * 10, config);
+        });
       }
     }
   }

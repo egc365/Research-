@@ -30,7 +30,8 @@ export const plugin = {
     const promoted = store.getPromotedVersion(payload.path);
     if (!promoted) return { promoted: null, rows: [] };
     const current = store.readFile(payload.rootPath, payload.path);
-    const promotedText = Buffer.isBuffer(promoted.content) ? promoted.content.toString('utf8') : String(promoted.content);
+    // node:sqlite hands BLOBs back as Uint8Array, not Buffer
+    const promotedText = typeof promoted.content === 'string' ? promoted.content : Buffer.from(promoted.content).toString('utf8');
     return {
       promoted: { checksum: promoted.checksum, created_at: promoted.created_at },
       current: { checksum: current.checksum },

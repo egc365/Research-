@@ -70,6 +70,7 @@ export const contributions = [
   { id: 'diff-renderer',      label: 'Continuous diff',    entry: '/contrib/diff-renderer.js',      description: 'Block-aligned diff between the preserved and working versions.' },
   { id: 'card-rail',          label: 'Block cards',        entry: '/contrib/card-rail.js',          description: 'The selected document split into markdown blocks, one card per block, with the latest decision per card.' },
   { id: 'amendment-editor',   label: 'Amendment editor',   entry: '/contrib/amendment-editor.js',   description: 'Write an amendment against the selected card. Each save is rev N+1 in an append-only log; nothing touches the document.' },
+  { id: 'decision-controls',  label: 'Decision controls',  entry: '/contrib/decision-controls.js',  description: 'Accept / needs-more-work on the selected card. Record-only owner verdicts; promotion deliberately lives elsewhere.' },
   { id: 'revision-timeline',  label: 'Timeline',           entry: '/contrib/revision-timeline.js',  description: 'Amendments and ledger events for the selected file, newest first.' },
   { id: 'actor-filter',       label: 'Actor filter',       entry: '/contrib/actor-filter.js',       description: 'Narrow event views to one actor (human, agent, filesystem, validator).' },
   { id: 'provenance-block',   label: 'Provenance',         entry: '/contrib/provenance-block.js',   description: 'Registry row for the selected file: state, exact SHA-256, run and span ids, timestamps.' },
@@ -93,8 +94,8 @@ export const defaultWiring = {
   },
   'revision-center': {
     rail: ['filesystem-tree'],
-    main: ['dual-document-view', 'diff-renderer'],
-    side: ['card-rail', 'amendment-editor', 'revision-timeline']
+    main: ['dual-document-view'],
+    side: [{ id: 'card-rail', config: { source: 'transcript' } }, 'amendment-editor', 'decision-controls', 'revision-timeline']
   },
   'governance-center': {
     rail: ['candidate-list'],

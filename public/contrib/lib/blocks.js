@@ -61,6 +61,54 @@ export function alignBlocks(leftText, rightText) {
   return rows;
 }
 
+// Small markdown block renderer, ported from the Revision Center's browser
+// side: headings, lists, tables, fenced code, rules, paragraphs. Enough to
+// read a document; deliberately not a full markdown engine.
+const escHtml = t => String(t ?? '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+function inline(t) {
+  return escHtml(t)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/(^|[^*])\*([^*]+)\*/g, '$1<i>$2</i>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+}
+
+export function renderBlock(src) {
+  if (src == null) return '';
+  const lines = src.split('\n');
+  if (lines[0].trimStart().startsWith('```')) {
+    const inner = lines.slice(1, lines[lines.length - 1].trimStart().startsWith('```')
+      ? lines.length - 1 : lines.length);
+    return '<pre>' + escHtml(inner.join('\n')) + '</pre>';
+  }
+  const h = /^(#{1,6})\s+(.*)$/.exec(lines[0]);
+  if (h && lines.length === 1) {
+    const level = Math.min(h[1].length, 3);
+    return `<h${level}>` + inline(h[2]) + `</h${level}>`;
+  }
+  if (/^(-{3,}|\*{3,}|_{3,})$/.test(lines[0].trim())) return '<hr>';
+  if (lines.length > 1 && /^\s*\|/.test(lines[0]) && /^\s*\|?[\s:|-]+\|/.test(lines[1] || '')) {
+    const cells = row => row.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+    let out = '<table><tr>' + cells(lines[0]).map(c => '<th>' + inline(c) + '</th>').join('') + '</tr>';
+    for (let i = 2; i < lines.length; i++) {
+      if (!lines[i].trim()) continue;
+      out += '<tr>' + cells(lines[i]).map(c => '<td>' + inline(c) + '</td>').join('') + '</tr>';
+    }
+    return out + '</table>';
+  }
+  if (lines.every(l => /^\s*([-*+]|\d+\.)\s+/.test(l))) {
+    return '<ul>' + lines.map(l => '<li>' + inline(l.replace(/^\s*([-*+]|\d+\.)\s+/, '')) + '</li>').join('') + '</ul>';
+  }
+  const body = lines.map(l => {
+    const hh = /^(#{1,6})\s+(.*)$/.exec(l);
+    if (hh) { const level = Math.min(hh[1].length, 3); return `<h${level}>` + inline(hh[2]) + `</h${level}>`; }
+    return inline(l);
+  }).join('<br>');
+  return '<p>' + body + '</p>';
+}
+
 // Stable card id for a block: its position plus a content fingerprint head,
 // so a card survives reloads unchanged but changes identity when its text does.
 export async function cardId(index, blockText) {

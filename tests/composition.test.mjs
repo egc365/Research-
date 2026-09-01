@@ -54,8 +54,8 @@ test('enabling a station exposes its default wiring, per slot in sort order', t 
   const wired = composition.stations['revision-center'];
   const bySlot = {};
   for (const row of wired) (bySlot[row.slot_name] ??= []).push(row.contribution_id);
-  assert.deepEqual(bySlot.main, ['dual-document-view', 'diff-renderer']);
-  assert.deepEqual(bySlot.side, ['card-rail', 'amendment-editor', 'revision-timeline']);
+  assert.deepEqual(bySlot.main, ['dual-document-view']);
+  assert.deepEqual(bySlot.side, ['card-rail', 'amendment-editor', 'decision-controls', 'revision-timeline']);
 });
 
 test('owner wiring edits survive a reseed', t => {
