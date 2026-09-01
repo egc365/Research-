@@ -87,3 +87,21 @@ test('disabling a station for a workspace removes it from the composition', t =>
   store.setWorkspacePlugin({ rootPath: ws, pluginId: 'dashboard-viewer', enabled: false });
   assert.equal(store.composition(ws).enabled.length, 0);
 });
+
+test('a wiring row can be disabled and restored without touching its neighbors', t => {
+  const { store, dir } = freshStore(t);
+  store.syncCatalog(catalogRows([]));
+  store.seedStationWiring(defaultWiring);
+  const ws = path.join(dir, 'ws2'); fs.mkdirSync(ws);
+  store.addWorkspace(ws);
+  store.setWorkspacePlugin({ rootPath: ws, pluginId: 'revision-center' });
+  const before = store.stationContributions('revision-center').map(r => r.contribution_id);
+  assert.ok(before.includes('card-rail') && before.includes('dual-document-view'));
+  store.setStationContribution({ stationId: 'revision-center', slotName: 'side', contributionId: 'card-rail', sortOrder: 10, config: { source: 'transcript' }, enabled: false });
+  const disabled = store.stationContributions('revision-center').map(r => r.contribution_id);
+  assert.ok(!disabled.includes('card-rail'));
+  assert.ok(disabled.includes('dual-document-view')); // cards gone, dual view intact
+  store.setStationContribution({ stationId: 'revision-center', slotName: 'side', contributionId: 'card-rail', sortOrder: 10, config: { source: 'transcript' }, enabled: true });
+  const restored = store.stationContributions('revision-center').find(r => r.contribution_id === 'card-rail');
+  assert.equal(restored.config.source, 'transcript');
+});

@@ -1,20 +1,31 @@
-// Contribution: continuous block-aligned diff between the preserved (promoted)
-// version and the working bytes.
+// Contribution: THE diff renderer — the one block-aligned diff implementation
+// (lib/blocks.js alignBlocks) rendered as a single column with a compact
+// summary. File Workbench, Revision Center and Validation Center all mount
+// this same module; where the base comes from is the revision service's
+// business (config.base = 'auto' → git HEAD, else promoted; 'promoted' forces
+// the registry's frozen bytes).
 import { alignBlocks } from '/contrib/lib/blocks.js';
 
 export function mount(el, ctx) {
   async function paint() {
     const f = ctx.selection;
     if (!f) { el.innerHTML = '<div class="empty">Select a file to see its diff.</div>'; return; }
-    const result = await ctx.action('diff', 'promoted-vs-current', { path: f.path, rootPath: ctx.workspace.root_path });
-    if (!result.promoted) {
-      el.innerHTML = '<div class="card"><h3>Continuous diff</h3><div class="muted">No promoted version yet — the whole file is new.</div></div>';
+    const doc = await ctx.action('revision', 'open', {
+      path: f.path, rootPath: ctx.workspace.root_path, preferBase: ctx.config.base || 'auto'
+    });
+    if (!doc.supported) {
+      el.innerHTML = `<div class="card"><h3>Diff</h3><div class="muted">${ctx.esc(doc.note)}</div></div>`;
       return;
     }
-    const promotedText = result.rows.filter(r => r.type !== 'add').map(r => r.text).join('\n');
-    const rows = alignBlocks(promotedText, f.content);
-    const changed = rows.filter(r => r.op !== 'eq').length;
-    el.innerHTML = `<div class="card"><h3>Continuous diff — ${changed} changed block(s)</h3>
+    if (!doc.hasBase) {
+      el.innerHTML = `<div class="card"><h3>Diff</h3><div class="muted">${ctx.esc(doc.base.from)} — the whole file counts as new.</div></div>`;
+      return;
+    }
+    const rows = alignBlocks(doc.base.text, doc.working.text);
+    const counts = { eq: 0, ins: 0, del: 0, chg: 0 };
+    for (const row of rows) counts[row.op]++;
+    el.innerHTML = `<div class="card"><h3>Diff vs ${ctx.esc(doc.base.from)}</h3>
+      <div class="muted">${counts.eq} same · ${counts.ins} added · ${counts.del} removed · ${counts.chg} changed</div>
       <div data-role="rows"></div></div>`;
     const host = el.querySelector('[data-role="rows"]');
     for (const row of rows) {
