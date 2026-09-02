@@ -610,6 +610,63 @@ export class ControlStore {
       .get(stationId, slotName, contributionId);
   }
 
+  // Move a wiring row between slots the station actually has, or reorder
+  // inside one slot. slot_name is in the primary key, so a cross-slot move
+  // is delete-then-insert; config_json and enabled travel with the row.
+  // beforeContributionId places the row in front of that id in the dest
+  // slot; omit or unknown appends. Dest ids are then 10, 20, 30…
+  moveStationContribution({ stationId, contributionId, fromSlot, toSlot, beforeContributionId = null }) {
+    if (!stationId || !contributionId || !fromSlot || !toSlot) {
+      throw new Error('stationId, contributionId, fromSlot and toSlot are required');
+    }
+    const station = this.db.prepare("SELECT plugin_id, manifest_json FROM ui_plugins WHERE plugin_id=? AND plugin_kind='station'").get(stationId);
+    if (!station) throw new Error(`Unknown station: ${stationId}`);
+    const slots = JSON.parse(station.manifest_json || '{}').slots || [];
+    if (!slots.includes(fromSlot)) throw new Error(`Station ${stationId} has no slot '${fromSlot}' (slots: ${slots.join(', ')})`);
+    if (!slots.includes(toSlot)) throw new Error(`Station ${stationId} has no slot '${toSlot}' (slots: ${slots.join(', ')})`);
+    const source = this.db.prepare(
+      'SELECT * FROM station_contributions WHERE station_id=? AND slot_name=? AND contribution_id=?'
+    ).get(stationId, fromSlot, contributionId);
+    if (!source) throw new Error(`No wiring row for ${contributionId} in ${stationId}/${fromSlot}`);
+    if (fromSlot !== toSlot) {
+      const clash = this.db.prepare(
+        'SELECT contribution_id FROM station_contributions WHERE station_id=? AND slot_name=? AND contribution_id=?'
+      ).get(stationId, toSlot, contributionId);
+      if (clash) throw new Error(`${contributionId} is already in slot '${toSlot}'`);
+    }
+    const destRows = this.db.prepare(
+      'SELECT contribution_id FROM station_contributions WHERE station_id=? AND slot_name=? ORDER BY sort_order, contribution_id'
+    ).all(stationId, toSlot)
+      .map(r => r.contribution_id)
+      .filter(id => !(fromSlot === toSlot && id === contributionId));
+    let at = destRows.length;
+    if (beforeContributionId) {
+      const idx = destRows.indexOf(beforeContributionId);
+      if (idx >= 0) at = idx;
+    }
+    destRows.splice(at, 0, contributionId);
+    this.db.exec('BEGIN');
+    try {
+      if (fromSlot !== toSlot) {
+        this.db.prepare('DELETE FROM station_contributions WHERE station_id=? AND slot_name=? AND contribution_id=?')
+          .run(stationId, fromSlot, contributionId);
+        this.db.prepare(`
+          INSERT INTO station_contributions(station_id,slot_name,contribution_id,sort_order,config_json,enabled)
+          VALUES(?,?,?,?,?,?)
+        `).run(stationId, toSlot, contributionId, (at + 1) * 10, source.config_json, source.enabled);
+      }
+      const update = this.db.prepare(
+        'UPDATE station_contributions SET sort_order=? WHERE station_id=? AND slot_name=? AND contribution_id=?'
+      );
+      destRows.forEach((id, i) => update.run((i + 1) * 10, stationId, toSlot, id));
+      this.db.exec('COMMIT');
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch { /* closed or already rolled back */ }
+      throw error;
+    }
+    return this.stationContributions(stationId);
+  }
+
   workspacePlugins(rootPath) {
     return this.db.prepare(`
       SELECT wp.*, up.label, up.plugin_kind, up.manifest_json
