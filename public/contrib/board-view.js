@@ -364,7 +364,7 @@ export function mount(el, ctx) {
           mountPalette();
           return;
         }
-        mutate('set-color', { cardId: card.card_id, color });
+        mutate('update-card', { cardId: card.card_id, color });
       }), removeBtn('card', card.card_id, 'Remove card'));
     };
     mountPalette();

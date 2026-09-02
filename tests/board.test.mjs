@@ -125,7 +125,7 @@ test('a pre-existing deeper tree still renders — the cap gates mutations only'
   assert.equal(groups[0].groups[0].groups[0].groups[0].title, 'legacy-depth-4');
 });
 
-test('sticky colors: column added to pre-existing boards, set-color validates the palette', async t => {
+test('sticky colors: column added to pre-existing boards, update-card validates the palette', async t => {
   const root = workspace(t);
   // Simulate a board created before the color column existed.
   const { DatabaseSync } = await import('node:sqlite');
@@ -141,10 +141,10 @@ test('sticky colors: column added to pre-existing boards, set-color validates th
   `);
   old.close();
   const { STICKY_COLORS } = await import('../plugins/server/stickies.mjs');
-  const colored = await act(root, 'set-color', { cardId: 1, color: STICKY_COLORS[3] });
+  const colored = await act(root, 'update-card', { cardId: 1, color: STICKY_COLORS[3] });
   assert.equal(colored.color, STICKY_COLORS[3]);
-  await assert.rejects(act(root, 'set-color', { cardId: 1, color: '#123456' }), e => e.code === 'BOARD_BAD_INPUT');
-  const cleared = await act(root, 'set-color', { cardId: 1, color: null });
+  await assert.rejects(act(root, 'update-card', { cardId: 1, color: '#123456' }), e => e.code === 'BOARD_BAD_INPUT');
+  const cleared = await act(root, 'update-card', { cardId: 1, color: null });
   assert.equal(cleared.color, null);
 });
 
@@ -158,15 +158,15 @@ test('color round-trips on file, link, and note cards', async t => {
   assert.equal(file.color, STICKY_COLORS[1]);
   assert.equal(link.color, STICKY_COLORS[2]);
   assert.equal(note.color, STICKY_COLORS[3]);
-  await act(root, 'set-color', { cardId: file.card_id, color: STICKY_COLORS[4] });
-  await act(root, 'set-color', { cardId: link.card_id, color: STICKY_COLORS[5] });
-  await act(root, 'set-color', { cardId: note.card_id, color: STICKY_COLORS[0] });
+  await act(root, 'update-card', { cardId: file.card_id, color: STICKY_COLORS[4] });
+  await act(root, 'update-card', { cardId: link.card_id, color: STICKY_COLORS[5] });
+  await act(root, 'update-card', { cardId: note.card_id, color: STICKY_COLORS[0] });
   const { groups } = await act(root, 'tree');
   const byKind = Object.fromEntries(groups[0].cards.map(c => [c.kind, c.color]));
   assert.equal(byKind.file, STICKY_COLORS[4]);
   assert.equal(byKind.link, STICKY_COLORS[5]);
   assert.equal(byKind.note, STICKY_COLORS[0]);
-  await act(root, 'set-color', { cardId: file.card_id, color: null });
+  await act(root, 'update-card', { cardId: file.card_id, color: null });
   const after = await act(root, 'tree');
   assert.equal(after.groups[0].cards.find(c => c.kind === 'file').color, null);
   await assert.rejects(
