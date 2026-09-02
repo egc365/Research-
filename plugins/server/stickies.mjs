@@ -8,7 +8,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 // The palette is defined once, in the client's sticky lib; the server accepts
 // any of its colors (or null = default) and nothing else.
-import { STICKY_COLORS, DEFAULT_COLOR } from '../../public/contrib/lib/sticky.js';
+import { STICKY_COLORS, DEFAULT_STICKY_COLOR } from '../../public/contrib/lib/sticky.js';
 
 const handles = new Map();
 
@@ -82,7 +82,7 @@ export const plugin = {
         db.prepare('DELETE FROM sticky_notes WHERE path=?').run(notePath);
         return { removed: notePath };
       }
-      const color = payload.color == null ? DEFAULT_COLOR : String(payload.color);
+      const color = payload.color == null ? DEFAULT_STICKY_COLOR : String(payload.color);
       if (!STICKY_COLORS.includes(color)) throw fail('STICKY_BAD_INPUT', `Not a sticky color: ${color}`);
       const now = new Date().toISOString();
       db.prepare(`

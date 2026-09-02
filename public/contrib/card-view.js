@@ -4,7 +4,7 @@
 // card (the file), sticky (the folder), icon (compact glyph plus title).
 // The source hands over card records and the verbs it supports; the faces
 // here draw a record and call the verbs without knowing which source it is.
-import { styleSticky, paletteEl, isolateStickyPointer, colorForLabel, DEFAULT_COLOR } from './lib/sticky.js';
+import { styleSticky, paletteEl, isolateStickyPointer, colorForLabel, DEFAULT_STICKY_COLOR } from './lib/sticky.js';
 import { NAMED_ICONS, MAX_FIELDS, defaultFace } from './lib/board-rules.js';
 
 const SOURCES = ['board', 'folder', 'blocks', 'queue'];
@@ -33,7 +33,7 @@ export async function mount(el, ctx) {
     if (appearance === 'icon') return 'icon';
     return card.face || faces.get(card.id) || appearance || defaultFace(card.kind);
   };
-  const resolveColor = (card, color = card.color) => color || colorForLabel(card.tags[0]?.label) || DEFAULT_COLOR;
+  const resolveColor = (card, color = card.color) => color || colorForLabel(card.tags[0]?.label) || DEFAULT_STICKY_COLOR;
 
   const div = (style, text) => {
     const d = document.createElement('div');
