@@ -16,7 +16,7 @@ const ORIENTATIONS = ['horizontal', 'vertical'];
 // The canvas (ADR-043): a top-level lane sits at x, y in canvas pixels; a
 // lane without a position is placed to the right of the placed ones.
 export const LANE_GAP = 24;
-export const LANE_DEFAULT_W = 280;
+const LANE_DEFAULT_W = 280;
 
 const IMAGE_EXT = { png: 'png', jpeg: 'jpg', jpg: 'jpg', gif: 'gif', webp: 'webp', 'svg+xml': 'svg', bmp: 'bmp', avif: 'avif' };
 

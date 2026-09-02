@@ -18,7 +18,7 @@ memory) · service `board`.
 
 Data home: `<workspace>/.research-ops/board.sqlite3` (per the data rule —
 board content never enters control.sqlite3). Tables `board_lanes` (surface,
-self-referencing parent_lane_id, name, orientation, sort_order) and
+self-referencing parent_lane_id, name, slug, orientation, x, y, w for a top-level lane's place on the canvas, sort_order) and
 `board_cards` (surface, lane_id or null for the floor, kind
 file|folder|link|note, ref, title, color, face, icon, fields_json, width,
 sort_order), both ON DELETE CASCADE. The rules both stores obey live once in

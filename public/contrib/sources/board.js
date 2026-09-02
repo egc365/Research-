@@ -1,15 +1,19 @@
 // Card source: the planning board. A surface is the workspace folder the
-// board shows (the root or any folder). Lanes on a surface arrange cards:
-// vertical is serial order, horizontal is parallel work, lanes nest three
-// deep and write nothing to disk. A file card is a real file and a folder
-// card is a real folder, both directly under the surface's folder; opening
-// a folder card drills into its surface. Cards drag between lanes and to
-// the floor; the sidebar tree's file rows drop in as file cards. Every
-// mutation goes through the board store and the view repaints from 'tree'.
-// config.mode 'whiteboard' keeps the same rows in memory until Save to project.
+// board shows (the root or any folder) and it is a canvas (ADR-043): a
+// top-level lane sits where the owner dropped it (x, y on its row, an
+// optional width w from its resize edge) and the canvas scrolls to fit.
+// Lanes arrange cards: vertical is serial order, horizontal is parallel
+// work, lanes nest three deep by dropping one inside another, and write
+// nothing to disk. A file card is a real file and a folder card is a real
+// folder, both directly under the surface's folder; opening a folder card
+// drills into its surface. Cards drag between lanes and to the floor, one
+// strip under the lowest lane; the sidebar tree's file rows drop in as file
+// cards. Every mutation goes through the board store and the view repaints
+// from 'tree'. config.mode 'whiteboard' keeps the same rows in memory until
+// Save to project.
 import { styleSticky, paletteEl, stickyKey, isolateStickyPointer, colorForLabel, DEFAULT_COLOR } from '../lib/sticky.js';
 import { boardStore } from '../lib/board-store.js';
-import { MAX_DEPTH } from '../lib/board-rules.js';
+import { MAX_DEPTH, LANE_GAP } from '../lib/board-rules.js';
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg)$/i;
 const CARD_MIME = 'x-ro-card';
@@ -29,6 +33,8 @@ export function open(ctx, config, view) {
   let renamingLaneId = null;
   let dragCardId = null;
   let dragLaneId = null;
+  let dragGrab = { dx: 0, dy: 0 }; // where inside its box the dragged lane was picked up
+  let canvas = null;
 
   const root = () => ctx.workspace?.root_path;
   const access = boardStore(ctx, config);
@@ -278,17 +284,20 @@ export function open(ctx, config, view) {
     view.repaint();
   }
 
-  // A lane drags as a whole; dropping it in another lane nests it there,
-  // dropping it on the floor makes it top-level. The store refuses cycles
-  // and the 3-deep cap, and a refusal surfaces as a notify.
-  async function dropLane(targetLane) {
+  // A lane drags as a whole. Dropped inside another lane it nests there and
+  // flows by that lane's orientation; dropped on empty canvas it becomes
+  // top-level at the point where its box was let go. The store refuses
+  // cycles and the 3-deep cap, and a refusal surfaces as a notify.
+  async function dropLane(targetLane, e) {
     if (dragLaneId == null) return;
     if (targetLane && targetLane.lane_id === dragLaneId) { dragLaneId = null; return; }
-    const siblings = targetLane ? targetLane.lanes : data.lanes;
-    const top = siblings.reduce((max, l) => Math.max(max, l.sort_order), 0);
     const moved = dragLaneId;
     dragLaneId = null;
-    await mutate('move-lane', { laneId: moved, toParentLaneId: targetLane ? targetLane.lane_id : null, sortOrder: top + 10 });
+    if (targetLane) { await mutate('move-lane', { laneId: moved, parentLaneId: targetLane.lane_id }); return; }
+    const box = canvas.getBoundingClientRect();
+    const x = Math.max(0, Math.round(e.clientX - box.left - canvas.clientLeft + canvas.scrollLeft - dragGrab.dx));
+    const y = Math.max(0, Math.round(e.clientY - box.top - canvas.clientTop + canvas.scrollTop - dragGrab.dy));
+    await mutate('move-lane', { laneId: moved, parentLaneId: null, x, y });
   }
 
   function cardPayload(e) {
@@ -310,7 +319,7 @@ export function open(ctx, config, view) {
     e.preventDefault();
     e.stopPropagation();
     if (isWhiteboard && e.dataTransfer.files?.length) { ingestFiles(e.dataTransfer.files, holderId(holder)); return; }
-    if (dragLaneId != null) { dropLane(holder); return; }
+    if (dragLaneId != null) { dropLane(holder, e); return; }
     if (dragCardId != null) { dropCard(holder, beforeCard); return; }
     const payload = cardPayload(e);
     if (payload) dropTreeFile(payload, holder);
@@ -552,6 +561,7 @@ export function open(ctx, config, view) {
     tile.className = 'board-lane';
     tile.dataset.laneId = String(lane.lane_id);
     tile.dataset.name = lane.name;
+    tile.dataset.slug = lane.slug;
     tile.dataset.orientation = lane.orientation;
     tile.dataset.depth = String(depth);
     tile.draggable = !editorOpen;
@@ -559,9 +569,19 @@ export function open(ctx, config, view) {
       e.stopPropagation();
       if (editing() || view.editing()) { e.preventDefault(); return; }
       dragLaneId = lane.lane_id;
+      const box = tile.getBoundingClientRect();
+      dragGrab = { dx: e.clientX - box.left, dy: e.clientY - box.top };
       e.dataTransfer.effectAllowed = 'move';
     });
     tile.addEventListener('dragend', () => { dragCardId = null; dragLaneId = null; });
+    if (depth === 1) {
+      tile.style.left = `${lane.x}px`;
+      tile.style.top = `${lane.y}px`;
+      tile.dataset.x = String(lane.x);
+      tile.dataset.y = String(lane.y);
+      if (lane.w != null) { tile.style.width = `${lane.w}px`; tile.dataset.w = String(lane.w); }
+      tile.appendChild(resizeEdgeEl(tile, lane));
+    }
     tile.appendChild(laneHeaderEl(lane, depth));
     const horizontal = lane.orientation === 'horizontal';
     const body = div(`display:flex;flex-direction:${horizontal ? 'row' : 'column'};align-items:${horizontal ? 'flex-start' : 'stretch'};flex-wrap:${horizontal ? 'wrap' : 'nowrap'};padding:4px;min-height:40px`);
@@ -573,10 +593,57 @@ export function open(ctx, config, view) {
     if (!lane.lanes.length && !lane.cards.length && !(adding && adding.laneId === lane.lane_id) && !(namingLane && namingLane.parentLaneId === lane.lane_id)) {
       body.appendChild(div('opacity:.5;font-size:12px;padding:6px', 'empty, drop cards here'));
     }
-    acceptDrag(body);
-    body.addEventListener('drop', e => handleDrop(e, lane, null));
     tile.appendChild(body);
+    // One drop target per lane: its header and body both nest what lands
+    // there; cards and nested lanes stop their own drops first.
+    acceptDrag(tile);
+    tile.addEventListener('drop', e => handleDrop(e, lane, null));
     return tile;
+  }
+
+  // The right edge of a top-level lane sets its width; height follows content.
+  function resizeEdgeEl(tile, lane) {
+    const edge = div();
+    edge.className = 'board-lane-resize';
+    edge.title = 'Drag to set the lane width';
+    edge.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startW = tile.offsetWidth;
+      let w = startW;
+      const move = ev => { w = Math.max(180, Math.round(startW + ev.clientX - startX)); tile.style.width = `${w}px`; };
+      const up = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        if (w !== startW) mutate('set-width', { laneId: lane.lane_id, w });
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    });
+    return edge;
+  }
+
+  // The scroll offset of each surface outlives drilling in and back (ADR-014).
+  const scrollKey = () => `ro.${isWhiteboard ? 'whiteboard' : 'board'}.scroll.${root() || ''}.${surface}`;
+  function readScroll() {
+    try { return JSON.parse(sessionStorage.getItem(scrollKey())) || { left: 0, top: 0 }; } catch { return { left: 0, top: 0 }; }
+  }
+  function writeScroll() {
+    try { sessionStorage.setItem(scrollKey(), JSON.stringify({ left: canvas.scrollLeft, top: canvas.scrollTop })); } catch { /* unavailable */ }
+  }
+
+  // The floor is one strip under the lowest lane, as wide as the canvas
+  // extent; measured after the lanes are in the DOM.
+  function placeFloor(floor) {
+    let bottom = 0;
+    let right = 0;
+    for (const tile of canvas.querySelectorAll(':scope > .board-lane')) {
+      bottom = Math.max(bottom, tile.offsetTop + tile.offsetHeight);
+      right = Math.max(right, tile.offsetLeft + tile.offsetWidth);
+    }
+    floor.style.top = `${bottom ? bottom + LANE_GAP : 0}px`;
+    floor.style.minWidth = `${Math.max(canvas.clientWidth, right + LANE_GAP)}px`;
   }
 
   function surfaceBarEl() {
@@ -723,11 +790,10 @@ export function open(ctx, config, view) {
     const editorOpen = editing() || view.editing();
     el.appendChild(surfaceBarEl());
     if (namingLane && namingLane.parentLaneId == null) el.appendChild(laneNameFormEl(null));
-    const lanes = div('display:flex;flex-direction:row;flex-wrap:wrap;align-items:flex-start');
-    lanes.className = 'board-lanes';
-    for (const lane of data.lanes) lanes.appendChild(laneEl(lane, 1, cardEl, editorOpen));
-    el.appendChild(lanes);
-    const floor = div('display:flex;flex-direction:row;flex-wrap:wrap;align-items:flex-start;min-height:60px');
+    canvas = div();
+    canvas.className = 'board-canvas';
+    for (const lane of data.lanes) canvas.appendChild(laneEl(lane, 1, cardEl, editorOpen));
+    const floor = div();
     floor.className = 'cards board-floor';
     for (const row of data.cards || []) floor.appendChild(cardEl(toCard(row), null));
     if (adding && adding.laneId == null) floor.appendChild(addFormEl(null));
@@ -736,7 +802,14 @@ export function open(ctx, config, view) {
     }
     acceptDrag(floor);
     floor.addEventListener('drop', e => handleDrop(e, null, null));
-    el.appendChild(floor);
+    canvas.appendChild(floor);
+    acceptDrag(canvas);
+    canvas.addEventListener('drop', e => handleDrop(e, null, null));
+    el.appendChild(canvas);
+    placeFloor(floor);
+    const at = readScroll();
+    canvas.scrollTo(at.left, at.top);
+    canvas.addEventListener('scroll', writeScroll);
     const focus = el.querySelector('.board-add-card input, .board-add-card textarea')
       || el.querySelector('.board-lane-title-edit, .board-lane-name, .board-inline-name');
     if (focus) queueMicrotask(() => focus.focus());
