@@ -514,6 +514,21 @@ export class ControlStore {
     }
   }
 
+  // Wiring removals for stations whose rows already exist (the seeder skips
+  // those). Each removal id runs at most once ever — recorded in app_meta —
+  // so an owner who later re-adds the contribution is never fought with.
+  applyWiringRemovals(removals = []) {
+    const seen = this.db.prepare('SELECT value FROM app_meta WHERE key=?');
+    const mark = this.db.prepare('INSERT OR REPLACE INTO app_meta(key,value) VALUES(?,?)');
+    const del = this.db.prepare('DELETE FROM station_contributions WHERE station_id=? AND slot_name=? AND contribution_id=?');
+    for (const rem of removals) {
+      const key = `wiring-removal:${rem.id}`;
+      if (seen.get(key)) continue;
+      del.run(rem.stationId, rem.slotName, rem.contributionId);
+      mark.run(key, new Date().toISOString());
+    }
+  }
+
   // An owner-defined station: a ui_plugins row like any shipped station, so
   // the kernel renders it and the plugin manager wires it — domain-specific
   // behavior arrives by choosing contributions, not by writing a component.

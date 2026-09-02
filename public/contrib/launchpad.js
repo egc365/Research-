@@ -1,4 +1,4 @@
-// Contribution: the link hub. One card, three launch groups — enabled
+// Contribution: the link hub. One card, three launch groups: enabled
 // stations (activate in place), known workspaces (switch via the bus), and
 // the fixed programs on this machine plus any workspace-preference links.
 const PROGRAM_DEFAULTS = [
@@ -10,35 +10,29 @@ const PROGRAM_DEFAULTS = [
 ];
 
 export function mount(el, ctx) {
-  function card(tag) {
+  function chip(tag, icon, name, title) {
     const node = document.createElement(tag);
-    node.className = 'launch-card';
+    node.className = 'launch-chip';
+    if (title) node.title = title;
+    const ic = document.createElement('span');
+    ic.className = 'ic';
+    ic.textContent = icon;
+    const label = document.createElement('span');
+    label.textContent = name;
+    node.append(ic, label);
     return node;
   }
 
-  function fill(node, icon, name, sub) {
-    const ic = document.createElement('div');
-    ic.className = 'ic';
-    ic.textContent = icon;
-    const label = document.createElement('div');
-    label.textContent = name;
-    const detail = document.createElement('div');
-    detail.className = 'sub';
-    detail.textContent = sub;
-    node.append(ic, label, detail);
-  }
-
-  function heading(text) {
-    const head = document.createElement('div');
-    head.className = 'muted';
-    head.textContent = text;
-    return head;
-  }
-
-  function grid() {
-    const g = document.createElement('div');
-    g.className = 'launch-grid';
-    return g;
+  function group(title, open) {
+    const details = document.createElement('details');
+    details.className = 'launch-group';
+    if (open) details.open = true;
+    const summary = document.createElement('summary');
+    summary.textContent = title;
+    const row = document.createElement('div');
+    row.className = 'launch-row';
+    details.append(summary, row);
+    return { details, row };
   }
 
   async function paint() {
@@ -56,51 +50,41 @@ export function mount(el, ctx) {
     el.innerHTML = '<div class="card"><h3>Launchpad</h3></div>';
     const host = el.querySelector('.card');
 
-    // 1) Stations
-    host.append(heading('Stations'));
-    const stationGrid = grid();
+    const stationsGroup = group('Stations', true);
     const stations = (Array.isArray(composition.enabled) ? composition.enabled : [])
       .filter(row => row.plugin_kind === 'station');
     for (const row of stations) {
       let manifest = row.manifest || {};
       if (typeof manifest === 'string') { try { manifest = JSON.parse(manifest); } catch { manifest = {}; } }
-      const node = card('div');
-      fill(node, manifest.icon || '▦', row.label || row.plugin_id,
-        String(manifest.description || '').slice(0, 60));
+      const node = chip('div', manifest.icon || '▦', row.label || row.plugin_id, row.plugin_id);
       node.onclick = () => ctx.activateStation(row.plugin_id);
-      stationGrid.append(node);
+      stationsGroup.row.append(node);
     }
-    if (!stations.length) stationGrid.append(heading('No stations enabled.'));
-    host.append(stationGrid);
+    host.append(stationsGroup.details);
 
-    // 2) Workspaces
-    host.append(heading('Workspaces'));
-    const wsGrid = grid();
+    const wsGroup = group('Workspaces', false);
     for (const ws of (Array.isArray(workspaces) ? workspaces : [])) {
       const isCurrent = ws.root_path === ctx.workspace?.root_path;
-      const node = card('div');
       const name = ws.label || ws.root_path.split('/').filter(Boolean).pop() || ws.root_path;
       const missing = ws.exists === false;
-      fill(node, missing ? '⚠' : '🗂', name + (missing ? ' — missing on disk' : ''), ws.root_path + (isCurrent ? ' · current' : ''));
+      const title = missing ? `${ws.root_path} (missing on disk)` : ws.root_path;
+      const node = chip('div', missing ? '⚠' : '🗂', name, title);
       if (!isCurrent) node.onclick = () => ctx.bus.emit('switch-workspace', { root: ws.root_path });
-      wsGrid.append(node);
+      wsGroup.row.append(node);
     }
-    host.append(wsGrid);
+    host.append(wsGroup.details);
 
-    // 3) Programs on this machine
-    host.append(heading('Programs on this machine'));
-    const programGrid = grid();
+    const programGroup = group('Programs on this machine', false);
     const extra = Array.isArray(prefs.workspace?.links) ? prefs.workspace.links : [];
     for (const link of [...PROGRAM_DEFAULTS, ...extra]) {
       if (!link || !link.url) continue;
-      const node = card('a');
+      const node = chip('a', '↗', link.label || link.url, link.url);
       node.href = link.url;
       node.target = '_blank';
       node.rel = 'noopener';
-      fill(node, '↗', link.label || link.url, link.url);
-      programGrid.append(node);
+      programGroup.row.append(node);
     }
-    host.append(programGrid);
+    host.append(programGroup.details);
   }
 
   const repaint = () => paint().catch(e => ctx.notify(e.message, 'error'));

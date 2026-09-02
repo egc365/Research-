@@ -69,7 +69,7 @@ test('owner wiring edits survive a reseed', t => {
   const { store } = freshStore(t);
   store.syncCatalog(catalogRows([]));
   store.seedStationWiring(defaultWiring);
-  for (const id of ['launchpad', 'board-view', 'folder-cards', 'inbox', 'statistics-view']) {
+  for (const id of ['launchpad', 'board-view', 'inbox', 'statistics-view']) {
     store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: id, remove: true });
   }
   store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'candidate-list', sortOrder: 10 });
@@ -171,6 +171,25 @@ test('wiring additions apply exactly once — an owner unwire is never fought', 
   assert.deepEqual(wired(), ['launchpad']);
 });
 
+test('wiring removals apply exactly once — an owner re-wire is never fought', t => {
+  const { store } = freshStore(t);
+  store.syncCatalog(catalogRows([]));
+  // Existing owner DB: dashboard already has launchpad + folder-cards.
+  store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'launchpad', sortOrder: 10 });
+  store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'folder-cards', sortOrder: 20 });
+  const removals = [{ id: 'test-remove-folder-cards', stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'folder-cards' }];
+  store.applyWiringRemovals(removals);
+  const wired = () => store.db.prepare(
+    "SELECT contribution_id FROM station_contributions WHERE station_id='dashboard-viewer' ORDER BY sort_order"
+  ).all().map(r => r.contribution_id);
+  assert.deepEqual(wired(), ['launchpad']);
+  store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'folder-cards', sortOrder: 20 });
+  store.applyWiringRemovals(removals);
+  assert.ok(wired().includes('folder-cards'));
+  const meta = store.db.prepare("SELECT value FROM app_meta WHERE key=?").get('wiring-removal:test-remove-folder-cards');
+  assert.ok(meta);
+});
+
 test('file-workbench is retired: no station row, no wiring, category on every survivor', t => {
   const { store } = freshStore(t);
   store.syncCatalog(catalogRows([]));
@@ -183,4 +202,5 @@ test('file-workbench is retired: no station row, no wiring, category on every su
   }
   assert.equal(defaultWiring['file-workbench'], undefined);
   assert.ok(defaultWiring['dashboard-viewer'].main.includes('board-view'));
+  assert.ok(!defaultWiring['dashboard-viewer'].main.includes('folder-cards'));
 });

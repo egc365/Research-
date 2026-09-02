@@ -249,15 +249,15 @@ button:disabled { opacity: .45; cursor: default; }
 .ok { color: var(--good); }
 
 /* --- launchpad, folder cards, sidebar rows, drag-reorder markers --- */
-.launch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: var(--spacing); margin-top: 6px; }
-.launch-card { display: flex; flex-direction: column; gap: 4px; padding: var(--spacing);
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-  cursor: pointer; text-decoration: none; color: var(--text); }
-.launch-card:hover { border-color: var(--accent); }
-.launch-card .ic { font-size: 1.5em; }
-.launch-card .sub { color: var(--muted-text); font-size: .82em; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; }
+.launch-group { margin: 2px 0; }
+.launch-group summary { cursor: pointer; font-size: .9em; color: var(--muted-text);
+  list-style-position: inside; white-space: nowrap; }
+.launch-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.launch-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;
+  background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius);
+  cursor: pointer; text-decoration: none; color: var(--text); font-size: .85em; }
+.launch-chip:hover { border-color: var(--accent); }
+.launch-chip .ic { font-size: 1em; line-height: 1; }
 .folder-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: var(--spacing); margin-top: 6px; }
 .folder-card { padding: var(--spacing); background: var(--surface);

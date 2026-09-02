@@ -130,7 +130,7 @@ test('composition writes are unreachable from the agent surface', async () => {
     }
     // Nothing was enabled or rewired by the refused calls.
     assert.equal(f.store.composition(f.root).enabled.length, 0);
-    assert.deepEqual(f.store.stationContributions('dashboard-viewer').map(r => r.contribution_id), ['launchpad', 'board-view', 'folder-cards', 'inbox', 'statistics-view']);
+    assert.deepEqual(f.store.stationContributions('dashboard-viewer').map(r => r.contribution_id), ['launchpad', 'board-view', 'inbox', 'statistics-view']);
 
     // The owner surface can do both, and reading composition works on both surfaces.
     assert.equal((await call(f.ownerBase, 'POST', '/api/composition/workspace', { rootPath: f.root, pluginId: 'planning-board' })).status, 200);
