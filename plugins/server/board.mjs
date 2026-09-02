@@ -1,6 +1,9 @@
-// Service: the planning board. A group is a real folder, a file card is a
-// real file. Content rows live in the workspace's own
-// <root>/.research-ops/board.sqlite3. Path bytes go through the control
+// Service: the planning board. A lane is a named container with an
+// orientation (vertical is serial order, horizontal is parallel work) and it
+// writes nothing to disk. A file card is a real file and a folder card is a
+// real folder, both directly under the surface's folder. The surface is the
+// workspace-relative folder the board is showing, '' for the root. Rows live
+// in <root>/.research-ops/board.sqlite3. Path bytes go through the control
 // store's guarded write (assertInsideWorkspace, create-only, register).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,6 +11,75 @@ import { DatabaseSync } from 'node:sqlite';
 import { STICKY_COLORS } from './stickies.mjs';
 
 const handles = new Map();
+
+const SCHEMA = `
+  CREATE TABLE IF NOT EXISTS board_lanes (
+    lane_id INTEGER PRIMARY KEY,
+    surface TEXT NOT NULL DEFAULT '',
+    parent_lane_id INTEGER NULL REFERENCES board_lanes(lane_id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    orientation TEXT NOT NULL DEFAULT 'vertical' CHECK(orientation IN ('horizontal','vertical')),
+    sort_order INTEGER NOT NULL DEFAULT 100,
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS board_cards (
+    card_id INTEGER PRIMARY KEY,
+    surface TEXT NOT NULL DEFAULT '',
+    lane_id INTEGER NULL REFERENCES board_lanes(lane_id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK(kind IN ('file','folder','link','note')),
+    ref TEXT NOT NULL,
+    title TEXT,
+    color TEXT,
+    face TEXT,
+    icon TEXT,
+    fields_json TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 100,
+    created_at TEXT NOT NULL
+  );
+`;
+
+// Boards written when a group was a folder (board_groups with folder_path)
+// or older. A group becomes a lane on the surface of its parent's folder; a
+// bound group also leaves a folder card for its folder in that lane; cards
+// keep their lane. An unbound child nests under its parent's lane.
+function migrateGroups(db) {
+  const groups = db.prepare('SELECT * FROM board_groups ORDER BY sort_order, group_id').all();
+  const cards = db.prepare('SELECT * FROM board_cards ORDER BY sort_order, card_id').all();
+  db.exec(`BEGIN; DROP TABLE board_cards; DROP TABLE board_groups; ${SCHEMA}`);
+  const insLane = db.prepare('INSERT INTO board_lanes (surface, parent_lane_id, name, orientation, sort_order, created_at) VALUES (?,?,?,?,?,?)');
+  const insCard = db.prepare('INSERT INTO board_cards (surface, lane_id, kind, ref, title, color, face, icon, fields_json, sort_order, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
+  const byId = new Map(groups.map(g => [g.group_id, g]));
+  const laneOf = new Map();
+  const laneFor = gid => {
+    if (laneOf.has(gid)) return laneOf.get(gid);
+    const g = byId.get(gid);
+    const parent = g.parent_id != null && byId.has(g.parent_id) ? byId.get(g.parent_id) : null;
+    let surface = '';
+    let parentLane = null;
+    if (parent) {
+      const p = laneFor(parent.group_id);
+      if (parent.folder_path) surface = parent.folder_path;
+      else { surface = p.surface; parentLane = p.lane_id; }
+    }
+    const name = g.folder_path ? path.posix.basename(g.folder_path) : g.title;
+    const orientation = g.orientation === 'horizontal' ? 'horizontal' : 'vertical';
+    const { lastInsertRowid } = insLane.run(surface, parentLane, name, orientation, g.sort_order ?? 100, g.created_at || new Date().toISOString());
+    const lane = { lane_id: Number(lastInsertRowid), surface };
+    laneOf.set(gid, lane);
+    if (g.folder_path) {
+      insCard.run(surface, lane.lane_id, 'folder', g.folder_path, name, g.color ?? null,
+        g.face || 'sticky', g.icon || 'folder', g.fields_json || '[]', 90, g.created_at || new Date().toISOString());
+    }
+    return lane;
+  };
+  for (const g of groups) laneFor(g.group_id);
+  for (const c of cards) {
+    const lane = c.group_id != null && byId.has(c.group_id) ? laneFor(c.group_id) : null;
+    insCard.run(lane ? lane.surface : '', lane ? lane.lane_id : null, c.kind, c.ref, c.title ?? null, c.color ?? null,
+      c.face ?? null, c.icon ?? null, c.fields_json ?? null, c.sort_order ?? 100, c.created_at || new Date().toISOString());
+  }
+  db.exec('COMMIT');
+}
 
 function boardDb(rootPath) {
   const root = path.resolve(String(rootPath || ''));
@@ -17,74 +89,12 @@ function boardDb(rootPath) {
   const home = path.join(root, '.research-ops');
   fs.mkdirSync(home, { recursive: true });
   db = new DatabaseSync(path.join(home, 'board.sqlite3'));
-  // foreign_keys is per-connection; the cached handle keeps it for its lifetime.
-  db.exec(`
-    PRAGMA foreign_keys=ON;
-    CREATE TABLE IF NOT EXISTS board_groups (
-      group_id INTEGER PRIMARY KEY,
-      parent_id INTEGER NULL REFERENCES board_groups(group_id) ON DELETE CASCADE,
-      title TEXT NOT NULL,
-      orientation TEXT NOT NULL DEFAULT 'vertical' CHECK(orientation IN ('horizontal','vertical')),
-      sort_order INTEGER NOT NULL DEFAULT 100,
-      folder_path TEXT,
-      color TEXT,
-      face TEXT,
-      icon TEXT,
-      fields_json TEXT,
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS board_cards (
-      card_id INTEGER PRIMARY KEY,
-      group_id INTEGER NULL REFERENCES board_groups(group_id) ON DELETE CASCADE,
-      kind TEXT NOT NULL CHECK(kind IN ('file','link','note')),
-      ref TEXT NOT NULL,
-      title TEXT,
-      color TEXT,
-      face TEXT,
-      icon TEXT,
-      fields_json TEXT,
-      sort_order INTEGER NOT NULL DEFAULT 100,
-      created_at TEXT NOT NULL
-    );
-  `);
-  // Boards written before sticky colors, folder_path, or the two faces existed lack the columns.
-  const cardColumns = db.prepare('PRAGMA table_info(board_cards)').all().map(c => c.name);
-  if (!cardColumns.includes('color')) db.exec('ALTER TABLE board_cards ADD COLUMN color TEXT');
-  if (!cardColumns.includes('face')) db.exec('ALTER TABLE board_cards ADD COLUMN face TEXT');
-  if (!cardColumns.includes('icon')) db.exec('ALTER TABLE board_cards ADD COLUMN icon TEXT');
-  if (!cardColumns.includes('fields_json')) db.exec('ALTER TABLE board_cards ADD COLUMN fields_json TEXT');
-  const groupColumns = db.prepare('PRAGMA table_info(board_groups)').all().map(c => c.name);
-  if (!groupColumns.includes('folder_path')) db.exec('ALTER TABLE board_groups ADD COLUMN folder_path TEXT');
-  if (!groupColumns.includes('color')) db.exec('ALTER TABLE board_groups ADD COLUMN color TEXT');
-  if (!groupColumns.includes('face')) db.exec('ALTER TABLE board_groups ADD COLUMN face TEXT');
-  if (!groupColumns.includes('icon')) db.exec('ALTER TABLE board_groups ADD COLUMN icon TEXT');
-  if (!groupColumns.includes('fields_json')) db.exec('ALTER TABLE board_groups ADD COLUMN fields_json TEXT');
-  // Boards written when group_id was NOT NULL refuse a root file or note.
-  // CREATE TABLE IF NOT EXISTS does not rebuild; copy into a nullable table.
-  const groupIdCol = db.prepare('PRAGMA table_info(board_cards)').all().find(c => c.name === 'group_id');
-  if (groupIdCol && groupIdCol.notnull) {
-    db.exec(`
-      PRAGMA foreign_keys=OFF;
-      CREATE TABLE board_cards_new (
-        card_id INTEGER PRIMARY KEY,
-        group_id INTEGER NULL REFERENCES board_groups(group_id) ON DELETE CASCADE,
-        kind TEXT NOT NULL CHECK(kind IN ('file','link','note')),
-        ref TEXT NOT NULL,
-        title TEXT,
-        color TEXT,
-        face TEXT,
-        icon TEXT,
-        fields_json TEXT,
-        sort_order INTEGER NOT NULL DEFAULT 100,
-        created_at TEXT NOT NULL
-      );
-      INSERT INTO board_cards_new (card_id, group_id, kind, ref, title, color, face, icon, fields_json, sort_order, created_at)
-        SELECT card_id, group_id, kind, ref, title, color, face, icon, fields_json, sort_order, created_at FROM board_cards;
-      DROP TABLE board_cards;
-      ALTER TABLE board_cards_new RENAME TO board_cards;
-      PRAGMA foreign_keys=ON;
-    `);
-  }
+  // foreign_keys is per-connection and cannot change inside a transaction.
+  db.exec('PRAGMA foreign_keys=OFF');
+  const legacy = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='board_groups'").get();
+  if (legacy) migrateGroups(db);
+  else db.exec(SCHEMA);
+  db.exec('PRAGMA foreign_keys=ON');
   handles.set(root, db);
   return db;
 }
@@ -97,6 +107,7 @@ function fail(code, message) {
 
 const NAMED_ICONS = ['file', 'folder', 'note', 'link', 'image'];
 const MAX_FIELDS = 4;
+const ORIENTATIONS = ['horizontal', 'vertical'];
 
 function defaultFace(kind) {
   return kind === 'folder' ? 'sticky' : 'card';
@@ -145,6 +156,19 @@ function parseFields(payload, existingJson) {
   return JSON.stringify(clean);
 }
 
+function parseColor(raw) {
+  if (raw == null) return null;
+  const color = String(raw);
+  if (!STICKY_COLORS.includes(color)) throw fail('BOARD_BAD_INPUT', `Not a sticky color: ${color}`);
+  return color;
+}
+
+function parseOrientation(raw) {
+  const orientation = String(raw || '');
+  if (!ORIENTATIONS.includes(orientation)) throw fail('BOARD_BAD_INPUT', `Unknown orientation: ${orientation}`);
+  return orientation;
+}
+
 function viewCard(row) {
   if (!row) return row;
   return {
@@ -155,26 +179,22 @@ function viewCard(row) {
   };
 }
 
-function viewGroup(row) {
-  if (!row) return row;
-  return {
-    ...row,
-    face: row.face || 'sticky',
-    icon: row.icon || 'folder',
-    fields_json: row.fields_json || '[]'
-  };
-}
-
-function mustGroup(db, groupId) {
-  const row = db.prepare('SELECT * FROM board_groups WHERE group_id=?').get(groupId);
-  if (!row) throw fail('BOARD_NOT_FOUND', `No such group: ${groupId}`);
-  return viewGroup(row);
+function mustLane(db, laneId) {
+  const row = db.prepare('SELECT * FROM board_lanes WHERE lane_id=?').get(laneId);
+  if (!row) throw fail('BOARD_NOT_FOUND', `No such lane: ${laneId}`);
+  return row;
 }
 
 function mustCard(db, cardId) {
   const row = db.prepare('SELECT * FROM board_cards WHERE card_id=?').get(cardId);
   if (!row) throw fail('BOARD_NOT_FOUND', `No such card: ${cardId}`);
   return viewCard(row);
+}
+
+function laneOn(db, laneId, surface) {
+  const lane = mustLane(db, laneId);
+  if (lane.surface !== surface) throw fail('BOARD_BAD_INPUT', `Lane ${laneId} is on surface '${lane.surface}', not '${surface}'`);
+  return lane;
 }
 
 function mustStore(store) {
@@ -191,76 +211,110 @@ function needName(raw) {
   return name;
 }
 
+function needLaneName(raw) {
+  const name = String(raw || '').trim();
+  if (!name) throw fail('BOARD_BAD_INPUT', 'A lane needs a name');
+  return name;
+}
+
+function idOrNull(raw) {
+  return raw == null || raw === '' ? null : Number(raw);
+}
+
 function childRel(parentRel, name) {
   return parentRel ? `${parentRel.replace(/\/+$/, '')}/${name}` : name;
+}
+
+function joinRel(a, b) {
+  return a && b ? `${a}/${b}` : a || b;
 }
 
 function absIn(rootPath, rel) {
   return path.join(path.resolve(rootPath), rel);
 }
 
-// The board stops at three levels of groups (owner rule): root, subgroup, and
-// a third nest for the finest grain. The cap gates mutations only — a deeper
-// tree written before the rule still renders. Depth 3 holds files only.
+// A workspace-relative path with no empty, dot, or dot-dot segments. '' is the root.
+function relPath(raw, what) {
+  const s = String(raw || '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  if (!s || s === '.') return '';
+  const parts = s.split('/');
+  for (const p of parts) {
+    if (!p || p === '.' || p === '..') throw fail('BOARD_BAD_INPUT', `${what} is a path inside the workspace`);
+  }
+  return parts.join('/');
+}
+
+function underSurface(rel, surface) {
+  return surface === '' ? rel !== '' : rel.startsWith(`${surface}/`);
+}
+
+// Lanes nest at most three deep on a surface (ADR-029). Depth 3 holds cards only.
 const MAX_DEPTH = 3;
 
-function groupDepth(db, groupId) {
+function laneDepth(db, laneId) {
   let depth = 0;
-  let cursor = groupId;
-  while (cursor != null) { depth++; cursor = mustGroup(db, cursor).parent_id; }
+  let cursor = laneId;
+  while (cursor != null) { depth++; cursor = mustLane(db, cursor).parent_lane_id; }
   return depth;
 }
 
-function subtreeHeight(db, groupId) {
-  const children = db.prepare('SELECT group_id FROM board_groups WHERE parent_id=?').all(groupId);
+function subtreeHeight(db, laneId) {
+  const children = db.prepare('SELECT lane_id FROM board_lanes WHERE parent_lane_id=?').all(laneId);
   let deepest = 0;
-  for (const child of children) deepest = Math.max(deepest, subtreeHeight(db, child.group_id));
+  for (const child of children) deepest = Math.max(deepest, subtreeHeight(db, child.lane_id));
   return 1 + deepest;
 }
 
 // New siblings land after the last one, with a gap the client can drag into.
-function nextOrder(db, table, where, value) {
-  const row = db.prepare(`SELECT MAX(sort_order) AS top FROM ${table} WHERE ${where}`).get(value);
+function nextOrder(db, table, where, ...params) {
+  const row = db.prepare(`SELECT MAX(sort_order) AS top FROM ${table} WHERE ${where}`).get(...params);
   return row?.top == null ? 100 : Number(row.top) + 10;
 }
 
-function parentFolder(db, parentId) {
-  if (parentId == null) return { folder_path: '' };
-  const parent = mustGroup(db, parentId);
-  if (!parent.folder_path) throw fail('BOARD_UNBOUND', `Bind group ${parentId} to a folder first`);
-  return parent;
+function nextCardOrder(db, surface, laneId) {
+  return laneId == null
+    ? nextOrder(db, 'board_cards', 'surface=? AND lane_id IS NULL', surface)
+    : nextOrder(db, 'board_cards', 'lane_id=?', laneId);
 }
 
-// A group is a folder. Missing: mkdir. Already there: bind to it. A file
-// at that path is not a group and is refused. createDirectory still throws
-// if the path exists, so the exist-and-adopt check sits in front of it.
-function ensureFolder(store, rootPath, folder_path) {
-  const target = absIn(rootPath, folder_path);
+function nextLaneOrder(db, surface, parentLaneId) {
+  return parentLaneId == null
+    ? nextOrder(db, 'board_lanes', 'surface=? AND parent_lane_id IS NULL', surface)
+    : nextOrder(db, 'board_lanes', 'parent_lane_id=?', parentLaneId);
+}
+
+function insertLane(db, { surface, parentLaneId, name, orientation, now }) {
+  if (parentLaneId != null) {
+    laneOn(db, parentLaneId, surface);
+    if (laneDepth(db, parentLaneId) >= MAX_DEPTH) throw fail('BOARD_DEPTH', `Lanes nest at most ${MAX_DEPTH} deep`);
+  }
+  const sortOrder = nextLaneOrder(db, surface, parentLaneId);
+  const { lastInsertRowid } = db.prepare(
+    'INSERT INTO board_lanes (surface, parent_lane_id, name, orientation, sort_order, created_at) VALUES (?,?,?,?,?,?)'
+  ).run(surface, parentLaneId, name, orientation, sortOrder, now());
+  return mustLane(db, Number(lastInsertRowid));
+}
+
+function insertCard(db, { surface, laneId, kind, ref, title, color, face, icon, fields_json, now }) {
+  const sortOrder = nextCardOrder(db, surface, laneId);
+  const { lastInsertRowid } = db.prepare(
+    'INSERT INTO board_cards (surface, lane_id, kind, ref, title, color, face, icon, fields_json, sort_order, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
+  ).run(surface, laneId, kind, ref, title, color, face, icon, fields_json, sortOrder, now());
+  return mustCard(db, Number(lastInsertRowid));
+}
+
+// A folder card is a folder. Missing: mkdir. Already there: adopt it. A file
+// at that path is refused. createDirectory throws if the path exists, so the
+// exist-and-adopt check sits in front of it.
+function ensureFolder(store, rootPath, rel) {
+  const target = absIn(rootPath, rel);
   mustStore(store).assertInsideWorkspace(rootPath, target);
   if (!fs.existsSync(target)) {
     store.createDirectory({ rootPath, dirPath: target, actor: 'human' });
   } else if (!fs.statSync(target).isDirectory()) {
-    throw fail('BOARD_BAD_INPUT', `Not a folder: ${folder_path}`);
+    throw fail('BOARD_BAD_INPUT', `Not a folder: ${rel}`);
   }
   return target;
-}
-
-function createBoundGroup(db, { store, rootPath, parentId, title, orientation, now }) {
-  if (parentId != null) {
-    mustGroup(db, parentId);
-    if (groupDepth(db, parentId) >= MAX_DEPTH) {
-      throw fail('BOARD_DEPTH', `Groups nest at most ${MAX_DEPTH} deep`);
-    }
-  }
-  if (!['horizontal', 'vertical'].includes(orientation)) throw fail('BOARD_BAD_INPUT', `Unknown orientation: ${orientation}`);
-  const parent = parentFolder(db, parentId);
-  const folder_path = childRel(parent.folder_path, title);
-  ensureFolder(store, rootPath, folder_path);
-  const sortOrder = nextOrder(db, 'board_groups', parentId == null ? 'parent_id IS NULL AND ?=1' : 'parent_id=?', parentId == null ? 1 : parentId);
-  const { lastInsertRowid } = db.prepare(
-    'INSERT INTO board_groups (parent_id, title, orientation, sort_order, folder_path, created_at, face, icon, fields_json) VALUES (?,?,?,?,?,?,?,?,?)'
-  ).run(parentId, title, orientation, sortOrder, folder_path, now(), 'sticky', 'folder', '[]');
-  return mustGroup(db, Number(lastInsertRowid));
 }
 
 async function writeNewFile({ store, plugins, rootPath, rel, content }) {
@@ -277,16 +331,6 @@ async function writeNewFile({ store, plugins, rootPath, rel, content }) {
     createOnly: true
   });
   return written.relativePath;
-}
-
-function destRel(raw) {
-  const s = String(raw || '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
-  if (!s || s === '.') return '';
-  const parts = s.split('/');
-  for (const p of parts) {
-    if (!p || p === '.' || p === '..') throw fail('BOARD_BAD_INPUT', 'Destination is a folder inside the workspace');
-  }
-  return parts.join('/');
 }
 
 function slugFile(text, ext) {
@@ -330,132 +374,134 @@ function imageFileName(card) {
   return slugFile(t || 'image', '.png');
 }
 
-function asTree(model) {
+function baseName(ref) {
+  return String(ref || '').split(/[\\/]/).filter(Boolean).pop() || '';
+}
+
+function depthOf(rel) {
+  return rel ? rel.split('/').length : 0;
+}
+
+// Save writes a sketch's cards flat under the destination (one folder per
+// folder card, never one per lane), copies its lanes onto the destination
+// surface, and records the arrangement in LANES.json beside the files.
+async function saveSketch(db, ctx, dest, model) {
   if (!model || typeof model !== 'object') throw fail('BOARD_BAD_INPUT', 'Save needs a model');
-  const groups = Array.isArray(model.groups) ? model.groups : [];
+  const lanes = Array.isArray(model.lanes) ? model.lanes : [];
   const cards = Array.isArray(model.cards) ? model.cards : [];
-  if (groups.some(g => Array.isArray(g.groups) || Array.isArray(g.cards))) return { groups, cards };
-  const viewed = groups.map(g => ({ ...g, groups: [], cards: [] }));
-  const byId = new Map(viewed.map(g => [g.group_id, g]));
-  const rootCards = [];
-  for (const card of cards) {
-    if (card.group_id == null) rootCards.push(card);
-    else byId.get(card.group_id)?.cards.push(card);
-  }
-  const roots = [];
-  for (const node of byId.values()) {
-    if (node.parent_id != null && byId.has(node.parent_id)) byId.get(node.parent_id).groups.push(node);
-    else roots.push(node);
-  }
-  return { groups: roots, cards: rootCards };
-}
-
-function insertBoundGroup(db, { parentId, title, orientation, folder_path, color, face, icon, fields_json, now }) {
-  if (!['horizontal', 'vertical'].includes(orientation)) orientation = 'vertical';
-  if (color != null && !STICKY_COLORS.includes(color)) throw fail('BOARD_BAD_INPUT', `Not a sticky color: ${color}`);
-  const sortOrder = nextOrder(db, 'board_groups', parentId == null ? 'parent_id IS NULL AND ?=1' : 'parent_id=?', parentId == null ? 1 : parentId);
-  const { lastInsertRowid } = db.prepare(
-    'INSERT INTO board_groups (parent_id, title, orientation, sort_order, folder_path, color, created_at, face, icon, fields_json) VALUES (?,?,?,?,?,?,?,?,?,?)'
-  ).run(parentId, title, orientation, sortOrder, folder_path, color, now(), face || 'sticky', icon || 'folder', fields_json || '[]');
-  return mustGroup(db, Number(lastInsertRowid));
-}
-
-function insertFileCard(db, { groupId, ref, title, color, face, icon, fields_json, now }) {
-  if (color != null && !STICKY_COLORS.includes(color)) throw fail('BOARD_BAD_INPUT', `Not a sticky color: ${color}`);
-  const sortWhere = groupId == null ? 'group_id IS NULL AND ?=1' : 'group_id=?';
-  const sortValue = groupId == null ? 1 : groupId;
-  const sortOrder = nextOrder(db, 'board_cards', sortWhere, sortValue);
-  const { lastInsertRowid } = db.prepare(
-    'INSERT INTO board_cards (group_id, kind, ref, title, color, sort_order, created_at, face, icon, fields_json) VALUES (?,?,?,?,?,?,?,?,?,?)'
-  ).run(groupId, 'file', ref, title, color, sortOrder, now(), face || 'card', icon || 'file', fields_json || '[]');
-  return mustCard(db, Number(lastInsertRowid));
-}
-
-async function saveCards(db, { store, plugins, rootPath, parentRel, parentId, cards, now }) {
-  const used = new Set();
-  const out = [];
-  for (const card of cards || []) {
-    const kind = String(card.kind || '');
-    const color = card.color == null ? null : String(card.color);
-    const fields_json = parseFields(card, card.fields_json || '[]');
-    let name;
-    let content;
-    let title = card.title == null ? null : String(card.title);
-    let iconKind = 'file';
-    if (kind === 'image') {
-      name = uniqueName(used, imageFileName(card));
-      content = imageBuffer(card.ref);
-      iconKind = 'image';
-      if (title == null) title = name;
-    } else if (kind === 'file') {
-      name = uniqueName(used, needName(String(card.ref || card.title || 'file.md').split(/[\\/]/).pop()));
-      content = textBody(card.body != null ? card.body : '');
-      if (title == null && String(content).trim()) title = String(content).trim().split('\n')[0];
-    } else if (kind === 'note') {
-      name = uniqueName(used, slugFile(card.ref || card.title || 'note', '.md'));
-      content = textBody(card.ref || '');
-      iconKind = 'note';
-      if (title == null) title = String(card.ref || '').split('\n')[0] || name;
-    } else if (kind === 'link') {
-      name = uniqueName(used, slugFile(card.title || card.ref || 'link', '.md'));
-      content = textBody(card.ref || '');
-      iconKind = 'link';
-    } else {
-      throw fail('BOARD_BAD_INPUT', `Unknown card kind: ${kind}`);
-    }
-    const face = parseFace(card.face, defaultFace(kind === 'folder' ? 'folder' : 'file'));
-    const icon = parseIcon(card.icon, defaultIcon(iconKind));
-    const rel = childRel(parentRel, name);
-    const ref = await writeNewFile({ store, plugins, rootPath, rel, content });
-    out.push(insertFileCard(db, { groupId: parentId, ref, title: title || name, color, face, icon, fields_json, now }));
-  }
-  return out;
-}
-
-async function saveGroups(db, ctx, groups, parentId, parentRel) {
-  const out = [];
-  for (const g of groups || []) {
-    if (parentId != null && groupDepth(db, parentId) >= MAX_DEPTH) {
-      throw fail('BOARD_DEPTH', `Groups nest at most ${MAX_DEPTH} deep`);
-    }
-    const title = needName(g.title);
-    const folder_path = childRel(parentRel, title);
-    ensureFolder(ctx.store, ctx.rootPath, folder_path);
-    const color = g.color == null ? null : String(g.color);
-    const row = insertBoundGroup(db, {
-      parentId,
-      title,
-      orientation: g.orientation === 'horizontal' ? 'horizontal' : 'vertical',
-      folder_path,
-      color,
-      face: parseFace(g.face, 'sticky'),
-      icon: parseIcon(g.icon, 'folder'),
-      fields_json: parseFields(g, g.fields_json || '[]'),
+  const laneRows = new Map(lanes.map(l => [l.lane_id, l]));
+  const laneOf = new Map();
+  const laneFor = id => {
+    if (laneOf.has(id)) return laneOf.get(id);
+    const l = laneRows.get(id);
+    if (!l) throw fail('BOARD_NOT_FOUND', `No such lane in the sketch: ${id}`);
+    const parentLaneId = l.parent_lane_id != null && laneRows.has(l.parent_lane_id) ? laneFor(l.parent_lane_id).lane_id : null;
+    const row = insertLane(db, {
+      surface: joinRel(dest, relPath(l.surface, 'A surface')),
+      parentLaneId,
+      name: needLaneName(l.name),
+      orientation: l.orientation === 'horizontal' ? 'horizontal' : 'vertical',
       now: ctx.now
     });
-    await saveCards(db, { ...ctx, parentRel: folder_path, parentId: row.group_id, cards: g.cards });
-    await saveGroups(db, ctx, g.groups, row.group_id, folder_path);
-    out.push(row);
+    laneOf.set(id, row);
+    return row;
+  };
+  for (const l of lanes) laneFor(l.lane_id);
+
+  const ordered = [...cards].sort((a, b) => {
+    const fa = a.kind === 'folder' ? 0 : 1;
+    const fb = b.kind === 'folder' ? 0 : 1;
+    return fa - fb || depthOf(String(a.surface || '')) - depthOf(String(b.surface || '')) || (a.sort_order ?? 0) - (b.sort_order ?? 0);
+  });
+  const usedBySurface = new Map([[dest, new Set(['LANES.json'])]]);
+  const used = surface => {
+    if (!usedBySurface.has(surface)) usedBySurface.set(surface, new Set());
+    return usedBySurface.get(surface);
+  };
+  const surfaces = new Set([dest]);
+  for (const card of ordered) {
+    const kind = String(card.kind || '');
+    const surface = joinRel(dest, relPath(card.surface, 'A surface'));
+    surfaces.add(surface);
+    const laneId = card.lane_id != null ? laneFor(card.lane_id).lane_id : null;
+    const color = parseColor(card.color);
+    const fields_json = parseFields(card, card.fields_json || '[]');
+    let title = card.title == null ? null : String(card.title);
+    let ref;
+    let iconKind = 'file';
+    let rowKind = 'file';
+    if (kind === 'folder') {
+      const name = needName(baseName(card.ref) || card.title);
+      ref = childRel(surface, name);
+      ensureFolder(ctx.store, ctx.rootPath, ref);
+      rowKind = 'folder';
+      iconKind = 'folder';
+      if (title == null) title = name;
+    } else {
+      let name;
+      let content;
+      if (kind === 'image') {
+        name = uniqueName(used(surface), imageFileName(card));
+        content = imageBuffer(card.ref);
+        iconKind = 'image';
+        if (title == null) title = name;
+      } else if (kind === 'file') {
+        name = uniqueName(used(surface), needName(baseName(card.ref) || card.title || 'file.md'));
+        content = textBody(card.body != null ? card.body : '');
+        if (title == null && String(content).trim()) title = String(content).trim().split('\n')[0];
+      } else if (kind === 'note') {
+        name = uniqueName(used(surface), slugFile(card.ref || card.title || 'note', '.md'));
+        content = textBody(card.ref || '');
+        iconKind = 'note';
+        if (title == null) title = String(card.ref || '').split('\n')[0] || name;
+      } else if (kind === 'link') {
+        name = uniqueName(used(surface), slugFile(card.title || card.ref || 'link', '.md'));
+        content = textBody(card.ref || '');
+        iconKind = 'link';
+      } else {
+        throw fail('BOARD_BAD_INPUT', `Unknown card kind: ${kind}`);
+      }
+      ref = await writeNewFile({ ...ctx, rel: childRel(surface, name), content });
+      if (title == null) title = name;
+    }
+    insertCard(db, {
+      surface, laneId, kind: rowKind, ref, title, color,
+      face: parseFace(card.face, defaultFace(rowKind)),
+      icon: parseIcon(card.icon, defaultIcon(iconKind)),
+      fields_json, now: ctx.now
+    });
   }
-  return out;
+
+  const outline = {};
+  const laneOutline = lane => ({
+    name: lane.name,
+    orientation: lane.orientation,
+    cards: lane.cards.map(c => c.ref),
+    lanes: lane.lanes.map(laneOutline)
+  });
+  for (const surface of surfaces) {
+    const t = tree(db, surface);
+    outline[surface.slice(dest.length).replace(/^\//, '')] = { lanes: t.lanes.map(laneOutline), cards: t.cards.map(c => c.ref) };
+  }
+  await writeNewFile({ ...ctx, rel: childRel(dest, 'LANES.json'), content: `${JSON.stringify(outline, null, 2)}\n` });
 }
 
-function tree(db) {
-  const groups = db.prepare('SELECT * FROM board_groups ORDER BY sort_order, group_id').all();
-  const cards = db.prepare('SELECT * FROM board_cards ORDER BY sort_order, card_id').all();
-  const byId = new Map(groups.map(g => [g.group_id, { ...viewGroup(g), groups: [], cards: [] }]));
-  const rootCards = [];
+function tree(db, surface) {
+  const lanes = db.prepare('SELECT * FROM board_lanes WHERE surface=? ORDER BY sort_order, lane_id').all(surface);
+  const cards = db.prepare('SELECT * FROM board_cards WHERE surface=? ORDER BY sort_order, card_id').all(surface);
+  const byId = new Map(lanes.map(l => [l.lane_id, { ...l, lanes: [], cards: [] }]));
+  const floor = [];
   for (const card of cards) {
     const viewed = viewCard(card);
-    if (card.group_id == null) rootCards.push(viewed);
-    else byId.get(card.group_id)?.cards.push(viewed);
+    if (card.lane_id == null) floor.push(viewed);
+    else byId.get(card.lane_id)?.cards.push(viewed);
   }
   const roots = [];
   for (const node of byId.values()) {
-    if (node.parent_id != null && byId.has(node.parent_id)) byId.get(node.parent_id).groups.push(node);
+    if (node.parent_lane_id != null && byId.has(node.parent_lane_id)) byId.get(node.parent_lane_id).lanes.push(node);
     else roots.push(node);
   }
-  return { groups: roots, cards: rootCards };
+  return { surface, lanes: roots, cards: floor };
 }
 
 export const plugin = {
@@ -466,120 +512,83 @@ export const plugin = {
   surface: 'main',
   category: 'planning',
   requiresWorkspace: true,
-  description: 'Planning board content: groups, subgroups and cards (files, links, notes) stored per workspace in .research-ops/board.sqlite3. A group is a real folder and a file card is a real file.',
-  async action({ action, payload, surface, store, plugins }) {
+  description: 'Planning board content: lanes (serial or parallel, no disk entry) and cards (files, folders, links, notes) per surface folder, stored per workspace in .research-ops/board.sqlite3. A file card is a real file and a folder card is a real folder.',
+  async action({ action, payload, surface: caller, store, plugins }) {
     // Whitelist, not per-action gates: any future mutation defaults to refused.
-    if (surface === 'agent' && action !== 'tree') {
+    if (caller === 'agent' && action !== 'tree') {
       throw fail('OWNER_SURFACE_ONLY', 'The board is arranged on the owner surface; agents may only read the tree.');
     }
     const db = boardDb(payload.rootPath);
     const now = () => new Date().toISOString();
     const rootPath = payload.rootPath;
+    const surface = relPath(payload.surface, 'A surface');
 
-    if (action === 'tree') return tree(db);
+    if (action === 'tree') return tree(db, surface);
+
+    if (action === 'add-lane') {
+      return insertLane(db, {
+        surface,
+        parentLaneId: idOrNull(payload.parentLaneId),
+        name: needLaneName(payload.name),
+        orientation: payload.orientation == null ? 'vertical' : parseOrientation(payload.orientation),
+        now
+      });
+    }
 
     if (action === 'add-card') {
       const kind = String(payload.kind || '');
-      if (kind === 'folder') {
-        const name = needName(payload.name);
-        const parentId = payload.groupId == null || payload.groupId === '' ? null : Number(payload.groupId);
-        return createBoundGroup(db, { store, rootPath, parentId, title: name, orientation: 'vertical', now });
-      }
-
-      const groupId = payload.groupId == null || payload.groupId === '' ? null : Number(payload.groupId);
-      if (groupId != null) mustGroup(db, groupId);
-      if (!['file', 'link', 'note'].includes(kind)) throw fail('BOARD_BAD_INPUT', `Unknown card kind: ${kind}`);
-      const color = payload.color == null ? null : String(payload.color);
-      if (color != null && !STICKY_COLORS.includes(color)) throw fail('BOARD_BAD_INPUT', `Not a sticky color: ${color}`);
-      const sortWhere = groupId == null ? 'group_id IS NULL AND ?=1' : 'group_id=?';
-      const sortValue = groupId == null ? 1 : groupId;
-      const sortOrder = nextOrder(db, 'board_cards', sortWhere, sortValue);
-
+      const laneId = idOrNull(payload.laneId);
+      if (laneId != null) laneOn(db, laneId, surface);
+      if (!['file', 'folder', 'link', 'note'].includes(kind)) throw fail('BOARD_BAD_INPUT', `Unknown card kind: ${kind}`);
+      const color = parseColor(payload.color);
       let ref;
       let title = payload.title == null ? null : String(payload.title);
-      if (kind === 'file') {
+      if (kind === 'folder') {
         const name = needName(payload.name);
-        const parent = parentFolder(db, groupId);
-        const rel = childRel(parent.folder_path, name);
+        ref = childRel(surface, name);
+        ensureFolder(store, rootPath, ref);
+        if (title == null) title = name;
+      } else if (kind === 'file' && payload.ref != null && payload.ref !== '') {
+        ref = relPath(payload.ref, 'A file');
+        if (!underSurface(ref, surface)) {
+          throw fail('BOARD_OUTSIDE_SURFACE', `${ref} is not under the surface '${surface || 'workspace root'}'`);
+        }
+        const abs = absIn(rootPath, ref);
+        mustStore(store).assertInsideWorkspace(rootPath, abs);
+        if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) throw fail('BOARD_NOT_FOUND', `No such file: ${ref}`);
+      } else if (kind === 'file') {
+        const name = needName(payload.name);
         const body = payload.body == null ? '' : String(payload.body);
-        const content = body && !body.endsWith('\n') ? `${body}\n` : body;
-        ref = await writeNewFile({ store, plugins, rootPath, rel, content });
+        ref = await writeNewFile({ store, plugins, rootPath, rel: childRel(surface, name), content: textBody(body) });
         if (title == null && body.trim()) title = body.trim().split('\n')[0];
       } else {
         ref = String(payload.ref || '').trim();
         if (!ref) throw fail('BOARD_BAD_INPUT', 'A card needs a ref (path, url, or note text)');
       }
-
-      const face = parseFace(payload.face, defaultFace(kind));
-      const icon = parseIcon(payload.icon, defaultIcon(kind));
-      const fields_json = parseFields(payload, '[]');
-      const { lastInsertRowid } = db.prepare(
-        'INSERT INTO board_cards (group_id, kind, ref, title, color, sort_order, created_at, face, icon, fields_json) VALUES (?,?,?,?,?,?,?,?,?,?)'
-      ).run(groupId, kind, ref, title, color, sortOrder, now(), face, icon, fields_json);
-      return mustCard(db, Number(lastInsertRowid));
-    }
-
-    if (action === 'bind-group') {
-      const group = mustGroup(db, Number(payload.groupId));
-      if (group.folder_path) return group;
-      const parent = group.parent_id == null ? { folder_path: '' } : mustGroup(db, group.parent_id);
-      if (group.parent_id != null && !parent.folder_path) {
-        throw fail('BOARD_UNBOUND', `Bind group ${group.parent_id} to a folder first`);
-      }
-      const title = needName(group.title);
-      const folder_path = childRel(parent.folder_path, title);
-      ensureFolder(store, rootPath, folder_path);
-      db.prepare('UPDATE board_groups SET folder_path=? WHERE group_id=?').run(folder_path, group.group_id);
-      return mustGroup(db, group.group_id);
+      return insertCard(db, {
+        surface, laneId, kind, ref, title, color,
+        face: parseFace(payload.face, defaultFace(kind)),
+        icon: parseIcon(payload.icon, defaultIcon(kind)),
+        fields_json: parseFields(payload, '[]'),
+        now
+      });
     }
 
     if (action === 'rename') {
-      const title = needName(payload.title);
-      const group = mustGroup(db, Number(payload.groupId));
-      if (!group.folder_path) {
-        db.prepare('UPDATE board_groups SET title=? WHERE group_id=?').run(title, group.group_id);
-        return mustGroup(db, group.group_id);
-      }
-      if (title === group.title) return group;
-      const parent = parentFolder(db, group.parent_id);
-      const fromRel = group.folder_path;
-      const toRel = childRel(parent.folder_path, title);
-      mustStore(store).moveEntry({
-        rootPath,
-        fromPath: absIn(rootPath, fromRel),
-        toPath: absIn(rootPath, toRel),
-        actor: 'human'
-      });
-      db.prepare('UPDATE board_groups SET title=?, folder_path=? WHERE group_id=?')
-        .run(title, toRel, group.group_id);
-      db.prepare(`UPDATE board_groups SET folder_path=? || substr(folder_path, length(?)+1) WHERE folder_path LIKE ? || '/%'`)
-        .run(toRel, fromRel, fromRel);
-      db.prepare(`UPDATE board_cards SET ref=? || substr(ref, length(?)+1) WHERE kind='file' AND (ref=? OR ref LIKE ? || '/%')`)
-        .run(toRel, fromRel, fromRel, fromRel);
-      return mustGroup(db, group.group_id);
+      const lane = mustLane(db, Number(payload.laneId));
+      db.prepare('UPDATE board_lanes SET name=? WHERE lane_id=?').run(needLaneName(payload.name), lane.lane_id);
+      return mustLane(db, lane.lane_id);
+    }
+
+    if (action === 'set-orientation') {
+      const lane = mustLane(db, Number(payload.laneId));
+      db.prepare('UPDATE board_lanes SET orientation=? WHERE lane_id=?').run(parseOrientation(payload.orientation), lane.lane_id);
+      return mustLane(db, lane.lane_id);
     }
 
     if (action === 'update-card') {
-      if (payload.cardId == null && payload.groupId != null) {
-        const group = mustGroup(db, Number(payload.groupId));
-        let color = group.color;
-        if (payload.color !== undefined) {
-          color = payload.color == null ? null : String(payload.color);
-          if (color != null && !STICKY_COLORS.includes(color)) throw fail('BOARD_BAD_INPUT', `Not a sticky color: ${color}`);
-        }
-        const face = parseFace(payload.face, group.face);
-        const icon = parseIcon(payload.icon, group.icon);
-        const fields_json = parseFields(payload, group.fields_json);
-        db.prepare('UPDATE board_groups SET color=?, face=?, icon=?, fields_json=? WHERE group_id=?')
-          .run(color, face, icon, fields_json, group.group_id);
-        return mustGroup(db, group.group_id);
-      }
       const card = mustCard(db, Number(payload.cardId));
-      let color = card.color;
-      if (payload.color !== undefined) {
-        color = payload.color == null ? null : String(payload.color);
-        if (color != null && !STICKY_COLORS.includes(color)) throw fail('BOARD_BAD_INPUT', `Not a sticky color: ${color}`);
-      }
+      const color = payload.color === undefined ? card.color : parseColor(payload.color);
       let title = card.title;
       let ref = card.ref;
       if (payload.name !== undefined && payload.name !== null) {
@@ -605,41 +614,36 @@ export const plugin = {
       return mustCard(db, card.card_id);
     }
 
-    if (action === 'set-orientation') {
-      const orientation = String(payload.orientation || '');
-      if (!['horizontal', 'vertical'].includes(orientation)) throw fail('BOARD_BAD_INPUT', `Unknown orientation: ${orientation}`);
-      mustGroup(db, Number(payload.groupId));
-      db.prepare('UPDATE board_groups SET orientation=? WHERE group_id=?').run(orientation, Number(payload.groupId));
-      return mustGroup(db, Number(payload.groupId));
-    }
-
-    if (action === 'move') {
+    if (action === 'move-card') {
       const sortOrder = Number(payload.sortOrder);
       if (!Number.isFinite(sortOrder)) throw fail('BOARD_BAD_INPUT', 'Move needs a numeric sortOrder');
-      if (payload.cardId != null) {
-        const card = mustCard(db, Number(payload.cardId));
-        const toGroupId = payload.toGroupId === undefined ? card.group_id
-          : payload.toGroupId == null ? null : Number(payload.toGroupId);
-        if (toGroupId != null) mustGroup(db, toGroupId);
-        db.prepare('UPDATE board_cards SET group_id=?, sort_order=? WHERE card_id=?').run(toGroupId, sortOrder, card.card_id);
-        return mustCard(db, card.card_id);
-      }
-      const group = mustGroup(db, Number(payload.groupId));
-      const toParentId = payload.toParentId == null ? null : Number(payload.toParentId);
+      const card = mustCard(db, Number(payload.cardId));
+      const toLaneId = payload.toLaneId === undefined ? card.lane_id : idOrNull(payload.toLaneId);
+      if (toLaneId != null) laneOn(db, toLaneId, card.surface);
+      db.prepare('UPDATE board_cards SET lane_id=?, sort_order=? WHERE card_id=?').run(toLaneId, sortOrder, card.card_id);
+      return mustCard(db, card.card_id);
+    }
+
+    if (action === 'move-lane') {
+      const sortOrder = Number(payload.sortOrder);
+      if (!Number.isFinite(sortOrder)) throw fail('BOARD_BAD_INPUT', 'Move needs a numeric sortOrder');
+      const lane = mustLane(db, Number(payload.laneId));
+      const toParentId = idOrNull(payload.toParentLaneId);
       if (toParentId != null) {
-        // Walk the ancestor chain of the destination; hitting the moving group
+        laneOn(db, toParentId, lane.surface);
+        // Walk the ancestor chain of the destination; hitting the moving lane
         // (including the destination itself) would make it its own descendant.
         let cursor = toParentId;
         while (cursor != null) {
-          if (cursor === group.group_id) throw fail('BOARD_CYCLE', 'Cannot move a group under itself or its own descendant');
-          cursor = mustGroup(db, cursor).parent_id;
+          if (cursor === lane.lane_id) throw fail('BOARD_CYCLE', 'Cannot move a lane under itself or its own descendant');
+          cursor = mustLane(db, cursor).parent_lane_id;
         }
-        if (groupDepth(db, toParentId) + subtreeHeight(db, group.group_id) > MAX_DEPTH) {
-          throw fail('BOARD_DEPTH', `Groups nest at most ${MAX_DEPTH} deep`);
+        if (laneDepth(db, toParentId) + subtreeHeight(db, lane.lane_id) > MAX_DEPTH) {
+          throw fail('BOARD_DEPTH', `Lanes nest at most ${MAX_DEPTH} deep`);
         }
       }
-      db.prepare('UPDATE board_groups SET parent_id=?, sort_order=? WHERE group_id=?').run(toParentId, sortOrder, group.group_id);
-      return mustGroup(db, group.group_id);
+      db.prepare('UPDATE board_lanes SET parent_lane_id=?, sort_order=? WHERE lane_id=?').run(toParentId, sortOrder, lane.lane_id);
+      return mustLane(db, lane.lane_id);
     }
 
     if (action === 'remove') {
@@ -648,14 +652,14 @@ export const plugin = {
         db.prepare('DELETE FROM board_cards WHERE card_id=?').run(Number(payload.cardId));
         return { removed: 'card', cardId: Number(payload.cardId), disk: 'left' };
       }
-      mustGroup(db, Number(payload.groupId));
-      db.prepare('DELETE FROM board_groups WHERE group_id=?').run(Number(payload.groupId));
-      return { removed: 'group', groupId: Number(payload.groupId), disk: 'left' };
+      mustLane(db, Number(payload.laneId));
+      db.prepare('DELETE FROM board_lanes WHERE lane_id=?').run(Number(payload.laneId));
+      return { removed: 'lane', laneId: Number(payload.laneId), disk: 'left' };
     }
 
     if (action === 'save-to-project') {
-      const dest = destRel(payload.destination);
-      const name = needName(payload.name);
+      const dest = relPath(payload.destination, 'A destination');
+      const name = needLaneName(payload.name);
       const target = dest ? absIn(rootPath, dest) : path.resolve(rootPath);
       mustStore(store).assertInsideWorkspace(rootPath, target);
       if (fs.existsSync(target)) {
@@ -665,12 +669,8 @@ export const plugin = {
       } else {
         store.createDirectory({ rootPath, dirPath: target, actor: 'human' });
       }
-      const sketched = asTree(payload.model);
-      const ctx = { store, plugins, rootPath, now };
-      await saveGroups(db, ctx, sketched.groups, null, dest);
-      await saveCards(db, { ...ctx, parentRel: dest, parentId: null, cards: sketched.cards });
-      const bound = tree(db);
-      return { destination: dest, name, label: name, groups: bound.groups, cards: bound.cards };
+      await saveSketch(db, { store, plugins, rootPath, now }, dest, payload.model);
+      return { destination: dest, name, label: name, ...tree(db, dest) };
     }
 
     throw new Error(`Unknown board action: ${action}`);

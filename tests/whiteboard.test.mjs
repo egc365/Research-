@@ -28,27 +28,34 @@ function act(ws, action, payload = {}, surface = 'owner') {
   return plugin.action({ action, payload: { rootPath: ws.root, ...payload }, surface, store: ws.store });
 }
 
+function fakeStorage(t) {
+  const bag = new Map();
+  const prev = globalThis.localStorage;
+  globalThis.localStorage = {
+    getItem: k => bag.get(k) ?? null,
+    setItem: (k, v) => bag.set(k, v),
+    removeItem: k => bag.delete(k)
+  };
+  t.after(() => { globalThis.localStorage = prev; });
+  return bag;
+}
+
 function sketchModel() {
   return {
-    groups: [
-      {
-        title: 'plans',
-        orientation: 'vertical',
-        cards: [
-          { kind: 'file', ref: 'README.md', title: 'README.md', body: 'the name given' },
-          { kind: 'note', ref: 'first words', title: 'first words' },
-          { kind: 'image', ref: DATA_URL, title: 'sketch.png' }
-        ],
-        groups: []
-      },
-      {
-        title: 'q3',
-        orientation: 'vertical',
-        cards: [{ kind: 'note', ref: 'notes', title: 'notes' }],
-        groups: []
-      }
+    lanes: [
+      { lane_id: 1, surface: '', parent_lane_id: null, name: 'plans', orientation: 'horizontal', sort_order: 100 },
+      { lane_id: 2, surface: '', parent_lane_id: 1, name: 'q3', orientation: 'vertical', sort_order: 100 },
+      { lane_id: 3, surface: 'howdy', parent_lane_id: null, name: 'inside', orientation: 'vertical', sort_order: 100 }
     ],
-    cards: []
+    cards: [
+      { card_id: 1, surface: '', lane_id: 1, kind: 'file', ref: 'README.md', title: 'README.md', body: 'the name given', sort_order: 100 },
+      { card_id: 2, surface: '', lane_id: 1, kind: 'note', ref: 'first words', title: 'first words', sort_order: 110 },
+      { card_id: 3, surface: '', lane_id: 1, kind: 'image', ref: DATA_URL, title: 'sketch.png', sort_order: 120 },
+      { card_id: 4, surface: '', lane_id: 2, kind: 'note', ref: 'notes', title: 'notes', sort_order: 100 },
+      { card_id: 5, surface: '', lane_id: 2, kind: 'note', ref: 'notes', title: 'notes', sort_order: 110 },
+      { card_id: 6, surface: '', lane_id: null, kind: 'folder', ref: 'howdy', title: 'howdy', sort_order: 100 },
+      { card_id: 7, surface: 'howdy', lane_id: 3, kind: 'file', ref: 'howdy/deep.md', title: 'deep', body: 'deep', sort_order: 100 }
+    ]
   };
 }
 
@@ -64,81 +71,73 @@ test('whiteboard-view is board-view mounted with mode whiteboard', () => {
   ]);
 });
 
-test('in-memory model round-trips through its serializer', () => {
+test('in-memory model round-trips through its serializer; a v1 blob is refused', () => {
   const model = emptyModel();
-  model.groups.push({
-    group_id: 1, parent_id: null, title: 'plans', orientation: 'vertical',
-    sort_order: 100, folder_path: null, color: null, face: 'sticky', icon: 'folder',
-    fields_json: '[]', created_at: '2026-09-02T00:00:00.000Z'
+  model.lanes.push({
+    lane_id: 1, surface: '', parent_lane_id: null, name: 'plans', orientation: 'vertical',
+    sort_order: 100, created_at: '2026-09-02T00:00:00.000Z'
   });
   model.cards.push(
     {
-      card_id: 1, group_id: 1, kind: 'file', ref: 'README.md', title: 'README.md',
+      card_id: 1, surface: '', lane_id: 1, kind: 'file', ref: 'README.md', title: 'README.md',
       body: 'the name given', color: null, face: 'card', icon: 'file',
       fields_json: '[]', sort_order: 100, created_at: '2026-09-02T00:00:00.000Z'
     },
     {
-      card_id: 2, group_id: 1, kind: 'note', ref: 'first words', title: 'first words',
-      color: null, face: 'card', icon: 'note', fields_json: '[]', sort_order: 110,
-      created_at: '2026-09-02T00:00:00.000Z'
-    },
-    {
-      card_id: 3, group_id: 1, kind: 'image', ref: DATA_URL, title: 'sketch.png',
+      card_id: 2, surface: '', lane_id: 1, kind: 'image', ref: DATA_URL, title: 'sketch.png',
       color: null, face: 'card', icon: 'image', fields_json: '[]', sort_order: 120,
       width: 180, created_at: '2026-09-02T00:00:00.000Z'
     }
   );
-  model.nextGroup = 2;
-  model.nextCard = 4;
+  model.nextLane = 2;
+  model.nextCard = 3;
   const back = parseModel(serializeModel(model));
-  assert.equal(back.groups[0].title, 'plans');
-  assert.equal(back.cards[0].kind, 'file');
+  assert.equal(back.lanes[0].name, 'plans');
   assert.equal(back.cards[0].body, 'the name given');
-  assert.equal(back.cards[1].ref, 'first words');
-  assert.equal(back.cards[2].kind, 'image');
-  assert.equal(back.cards[2].ref, DATA_URL);
-  assert.equal(back.cards[2].width, 180);
-  assert.equal(back.nextGroup, 2);
-  assert.equal(back.nextCard, 4);
+  assert.equal(back.cards[1].width, 180);
+  assert.equal(back.nextLane, 2);
+  assert.equal(back.nextCard, 3);
   assert.deepEqual(parseModel(serializeModel(emptyModel())), emptyModel());
+  assert.throws(() => parseModel(JSON.stringify({ v: 1, groups: [], cards: [] })), /version/);
 });
 
 test('whiteboard store never calls the board service or the filesystem', async t => {
   const ws = workspace(t);
-  const bag = new Map();
-  const prev = globalThis.localStorage;
-  globalThis.localStorage = {
-    getItem: k => bag.get(k) ?? null,
-    setItem: (k, v) => bag.set(k, v),
-    removeItem: k => bag.delete(k)
-  };
-  t.after(() => { globalThis.localStorage = prev; });
+  const bag = fakeStorage(t);
   const ctx = {
     workspace: { root_path: ws.root },
     action() { throw new Error('board service should not be called'); }
   };
   const access = boardStore(ctx, { mode: 'whiteboard' });
-  const plans = await access.call('add-card', { kind: 'folder', name: 'plans' });
-  await access.call('add-card', { groupId: plans.group_id, kind: 'note', ref: 'first words' });
-  await access.call('add-card', { groupId: plans.group_id, kind: 'image', ref: DATA_URL, title: 'sketch.png' });
+  const plans = await access.call('add-lane', { name: 'plans' });
+  await access.call('add-card', { laneId: plans.lane_id, kind: 'note', ref: 'first words' });
+  await access.call('add-card', { laneId: plans.lane_id, kind: 'image', ref: DATA_URL, title: 'sketch.png' });
+  const file = await access.call('add-card', { laneId: plans.lane_id, kind: 'file', name: 'plan.md', body: 'plan' });
+  const howdy = await access.call('add-card', { kind: 'folder', name: 'howdy' });
+  const inside = await access.call('add-lane', { surface: 'howdy', name: 'inside' });
+  await access.call('add-card', { surface: 'howdy', laneId: inside.lane_id, kind: 'file', name: 'deep.md' });
+  await access.call('move-card', { cardId: file.card_id, toLaneId: null, sortOrder: 200 });
   const tree = await access.call('tree');
-  assert.equal(tree.groups[0].title, 'plans');
-  assert.equal(tree.groups[0].cards[1].kind, 'image');
-  assert.equal(fs.existsSync(path.join(ws.root, 'plans')), false);
+  assert.equal(tree.lanes[0].name, 'plans');
+  assert.deepEqual(tree.lanes[0].cards.map(c => c.kind), ['note', 'image']);
+  assert.deepEqual(tree.cards.map(c => [c.kind, c.ref]), [['folder', 'howdy'], ['file', 'plan.md']]);
+  const deeper = await access.call('tree', { surface: 'howdy' });
+  assert.deepEqual(deeper.lanes[0].cards.map(c => c.ref), ['howdy/deep.md']);
+  assert.equal(howdy.ref, 'howdy');
+  assert.equal(fs.existsSync(path.join(ws.root, 'howdy')), false);
+  assert.equal(fs.existsSync(path.join(ws.root, 'plan.md')), false);
   assert.equal(fs.existsSync(path.join(ws.root, '.research-ops', 'board.sqlite3')), false);
   const stored = parseModel(bag.get(`ro.whiteboard.${ws.root}`));
-  assert.equal(stored.groups[0].title, 'plans');
+  assert.equal(stored.lanes[0].name, 'plans');
+  assert.equal(stored.cards.length, 5);
 });
 
-test('Save writes the tree and binds rows', async t => {
+test('Save writes files flat under the destination, lanes into the board, and LANES.json', async t => {
   const ws = workspace(t);
-  const saved = await act(ws, 'save-to-project', {
-    destination: 'projects',
-    name: 'Q3 plan',
-    model: sketchModel()
-  });
+  const saved = await act(ws, 'save-to-project', { destination: 'projects', name: 'Q3 plan', model: sketchModel() });
   assert.equal(saved.label, 'Q3 plan');
   assert.equal(saved.destination, 'projects');
+  assert.equal(saved.surface, 'projects');
   const dest = path.join(ws.root, 'projects');
   const found = [];
   function walk(dir) {
@@ -149,33 +148,42 @@ test('Save writes the tree and binds rows', async t => {
     }
   }
   walk(dest);
-  assert.deepEqual(found, [
-    'plans',
-    'plans/README.md',
-    'plans/first-words.md',
-    'plans/sketch.png',
-    'q3',
-    'q3/notes.md'
+  assert.deepEqual(found, ['LANES.json', 'README.md', 'first-words.md', 'howdy', 'howdy/deep.md', 'notes-2.md', 'notes.md', 'sketch.png']);
+  assert.equal(fs.readFileSync(path.join(dest, 'README.md'), 'utf8'), 'the name given\n');
+  assert.equal(fs.readFileSync(path.join(dest, 'first-words.md'), 'utf8'), 'first words\n');
+  assert.equal(fs.readFileSync(path.join(dest, 'sketch.png')).equals(PNG), true);
+  assert.equal(fs.readFileSync(path.join(dest, 'howdy', 'deep.md'), 'utf8'), 'deep\n');
+  const { lanes, cards } = await act(ws, 'tree', { surface: 'projects' });
+  assert.deepEqual(lanes.map(l => [l.name, l.orientation, l.cards.map(c => c.ref), l.lanes.map(i => [i.name, i.cards.map(c => c.ref)])]), [
+    ['plans', 'horizontal', ['projects/README.md', 'projects/first-words.md', 'projects/sketch.png'], [['q3', ['projects/notes.md', 'projects/notes-2.md']]]]
   ]);
-  assert.equal(fs.readFileSync(path.join(dest, 'plans', 'README.md'), 'utf8'), 'the name given\n');
-  assert.equal(fs.readFileSync(path.join(dest, 'plans', 'first-words.md'), 'utf8'), 'first words\n');
-  assert.equal(fs.readFileSync(path.join(dest, 'q3', 'notes.md'), 'utf8'), 'notes\n');
-  assert.equal(fs.readFileSync(path.join(dest, 'plans', 'sketch.png')).equals(PNG), true);
-  const { groups } = await act(ws, 'tree');
-  assert.deepEqual(groups.map(g => g.title).sort(), ['plans', 'q3']);
-  const plans = groups.find(g => g.title === 'plans');
-  assert.equal(plans.folder_path, 'projects/plans');
-  const byRef = Object.fromEntries(plans.cards.map(c => [path.basename(c.ref), c]));
-  assert.equal(byRef['README.md'].kind, 'file');
-  assert.equal(byRef['README.md'].ref, 'projects/plans/README.md');
-  assert.equal(byRef['first-words.md'].kind, 'file');
-  assert.equal(byRef['sketch.png'].kind, 'file');
-  assert.equal(byRef['sketch.png'].ref, 'projects/plans/sketch.png');
-  const q3 = groups.find(g => g.title === 'q3');
-  assert.equal(q3.folder_path, 'projects/q3');
-  assert.equal(q3.cards[0].ref, 'projects/q3/notes.md');
-  assert.ok(ws.store.getArtifact(path.join(dest, 'plans', 'README.md')));
-  assert.ok(ws.store.getArtifact(path.join(dest, 'plans', 'sketch.png')));
+  assert.deepEqual(cards.map(c => [c.kind, c.ref]), [['folder', 'projects/howdy']]);
+  const inside = await act(ws, 'tree', { surface: 'projects/howdy' });
+  assert.deepEqual(inside.lanes.map(l => [l.name, l.cards.map(c => c.ref)]), [['inside', ['projects/howdy/deep.md']]]);
+  const outline = JSON.parse(fs.readFileSync(path.join(dest, 'LANES.json'), 'utf8'));
+  assert.deepEqual(outline[''].lanes[0].lanes[0], { name: 'q3', orientation: 'vertical', cards: ['projects/notes.md', 'projects/notes-2.md'], lanes: [] });
+  assert.deepEqual(outline[''].cards, ['projects/howdy']);
+  assert.deepEqual(outline.howdy.lanes[0].cards, ['projects/howdy/deep.md']);
+  assert.ok(ws.store.getArtifact(path.join(dest, 'README.md')));
+  assert.ok(ws.store.getArtifact(path.join(dest, 'sketch.png')));
+  assert.ok(ws.store.getArtifact(path.join(dest, 'LANES.json')));
+});
+
+test('Save from the memory store sends its rows and empties the sketch', async t => {
+  const ws = workspace(t);
+  const bag = fakeStorage(t);
+  const ctx = {
+    workspace: { root_path: ws.root },
+    action: (id, action, payload) => plugin.action({ action, payload, surface: 'owner', store: ws.store })
+  };
+  const access = boardStore(ctx, { mode: 'whiteboard' });
+  const lane = await access.call('add-lane', { name: 'task 1' });
+  await access.call('add-card', { laneId: lane.lane_id, kind: 'file', name: 'plan.md', body: 'plan' });
+  const result = await access.call('save-to-project', { destination: 'projects', name: 'P' });
+  assert.deepEqual(result.lanes.map(l => [l.name, l.cards.map(c => c.ref)]), [['task 1', ['projects/plan.md']]]);
+  assert.equal(fs.existsSync(path.join(ws.root, 'projects', 'task 1')), false);
+  assert.equal(fs.readFileSync(path.join(ws.root, 'projects', 'plan.md'), 'utf8'), 'plan\n');
+  assert.deepEqual(parseModel(bag.get(`ro.whiteboard.${ws.root}`)), emptyModel());
 });
 
 test('Save refuses a non-empty destination', async t => {
@@ -187,7 +195,7 @@ test('Save refuses a non-empty destination', async t => {
     error => error.code === 'BOARD_NONEMPTY'
   );
   assert.equal(fs.readFileSync(path.join(ws.root, 'projects', 'already.md'), 'utf8'), 'nope\n');
-  assert.equal(fs.existsSync(path.join(ws.root, 'projects', 'plans')), false);
-  const { groups } = await act(ws, 'tree');
-  assert.deepEqual(groups, []);
+  assert.equal(fs.existsSync(path.join(ws.root, 'projects', 'README.md')), false);
+  const { lanes } = await act(ws, 'tree', { surface: 'projects' });
+  assert.deepEqual(lanes, []);
 });
