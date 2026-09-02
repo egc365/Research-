@@ -6,7 +6,6 @@
 const $ = id => document.getElementById(id);
 const stage = $('stage');
 const stationBar = $('stationBar');
-const workspaceSelect = $('workspaceSelect');
 const statusBar = $('statusBar');
 const pluginManager = $('pluginManager');
 const pluginManagerBody = $('pluginManagerBody');
@@ -272,9 +271,6 @@ function makeContext(stationId, config, wiringRows = null) {
     get wiring() { return wiringRows || kernel.composition.stations[stationId] || []; },
     activateStation,
     get boardPath() { return kernel.boardPath || []; },
-    setBoardPath(ids) {
-      bus.emit('board-path', { path: Array.isArray(ids) ? ids.map(String) : [] });
-    },
     // Which stations a contribution may offer to open — retired or disabled
     // ids (e.g. an old openIn config naming file-workbench) filter out.
     enabledStationIds: () => enabledStations().map(row => row.plugin_id),
@@ -315,7 +311,10 @@ function enabledStations() {
 const CATEGORY_ORDER = ['Curate', 'Monitor'];
 const HOME_STATION = 'dashboard-viewer';
 
+let inboxDispose = null;
+
 function closeNavDrops() {
+  if (inboxDispose) { inboxDispose(); inboxDispose = null; }
   for (const panel of stationBar.querySelectorAll('.nav-drop-panel')) panel.hidden = true;
   for (const wrap of stationBar.querySelectorAll('.nav-drop')) wrap.classList.remove('open');
 }
@@ -354,15 +353,13 @@ function navDropdown({ id, label, fill }) {
   return wrap;
 }
 
-let inboxDispose = null;
-
 async function fillInbox(panel) {
   if (inboxDispose) { inboxDispose(); inboxDispose = null; }
   panel.replaceChildren();
   const host = document.createElement('div');
   panel.append(host);
   try {
-    const module = await loadModule({ contribution_id: 'inbox', client_entry: '/contrib/inbox.js' });
+    const module = await loadModule(catalogClient('inbox'));
     const { ctx, dispose } = makeContext(kernel.activeStation, {});
     const unmount = await module.mount(host, ctx);
     inboxDispose = () => { if (typeof unmount === 'function') unmount(); dispose(); };
@@ -405,6 +402,7 @@ function fillWorkspaces(panel) {
 }
 
 function renderStationBar() {
+  closeNavDrops();
   stationBar.replaceChildren();
   const available = enabledStations();
   const home = available.find(row => row.plugin_id === HOME_STATION);
@@ -426,7 +424,6 @@ function renderStationBar() {
   for (const row of available) {
     if (row.plugin_id === HOME_STATION) continue;
     const category = row.manifest.category || 'More';
-    if (category === 'Plan') continue;
     if (!buckets.has(category)) buckets.set(category, []);
     buckets.get(category).push(row);
   }
@@ -517,6 +514,12 @@ async function loadModule(row) {
   return kernel.modules.get(row.contribution_id);
 }
 
+function catalogClient(id) {
+  const row = kernel.composition.catalog.find(r => r.plugin_id === id);
+  if (!row?.client_entry) throw new Error(`${id} is not in the catalog`);
+  return { contribution_id: id, client_entry: row.client_entry };
+}
+
 // Slim chrome on every mounted box. Fields come from the wiring row:
 // stationId from activateStation, slotName/contributionId/label from
 // kernel.composition.stations[stationId] (station_contributions JOIN ui_plugins).
@@ -598,7 +601,6 @@ async function activateStation(stationId) {
   if (slotEls.main && slotEls.side && (layout === 'main-side' || layout === 'rail-main-side')) {
     mountPaneResizer(slotEls);
   }
-  if (stationId === HOME_STATION && slotEls.main) mountBoardFrameChrome(slotEls.main);
   // Lifecycle metadata sits at the bottom of the side slot and starts folded —
   // a render-order nudge only; the stored wiring sort_order is untouched.
   const lifecycleLast = new Set(['state-badge', 'provenance-block', 'revision-timeline']);
@@ -650,6 +652,7 @@ async function activateStation(stationId) {
   for (const [name, el] of Object.entries(slotEls)) {
     if (!el.children.length) el.innerHTML = `<div class="empty">Empty slot: ${esc(name)}. Wire a contribution in Plugins ⚙.</div>`;
   }
+  if (stationId === HOME_STATION && slotEls.main) mountBoardFrameChrome(slotEls.main);
   if (!skipHistory && previous !== stationId) commitHistory('push');
 }
 
@@ -682,14 +685,19 @@ async function openProjectDialog() {
   body.replaceChildren();
   const host = document.createElement('div');
   body.append(host);
-  const module = await loadModule({ contribution_id: 'project-create-form', client_entry: '/contrib/project-create-form.js' });
+  const module = await loadModule(catalogClient('project-create-form'));
   const { ctx, dispose } = makeContext(kernel.activeStation, {});
+  ctx.selectFile = async path => {
+    const rec = await selectFile(path);
+    projectDialog.close();
+    return rec;
+  };
   const unmount = await module.mount(host, ctx);
   projectDispose = () => { if (typeof unmount === 'function') unmount(); dispose(); };
   projectDialog.showModal();
 }
 
-async function recompose(keepStation = true) {
+async function recompose(keepStation = true, preferStation = null) {
   disposeMounts();
   await loadComposition();
   if (workspaceMissing()) {
@@ -704,10 +712,12 @@ async function recompose(keepStation = true) {
     return renderEmptyFrame();
   }
   const remembered = kernel.workspace ? uiMemory.read().station?.[kernel.workspace.root_path] : null;
-  const target = keepStation && available.some(row => row.plugin_id === kernel.activeStation)
+  const pick = id => id && available.some(row => row.plugin_id === id);
+  const target = keepStation && pick(kernel.activeStation)
     ? kernel.activeStation
-    : available.some(row => row.plugin_id === remembered) ? remembered
-    : available.some(row => row.plugin_id === HOME_STATION) ? HOME_STATION
+    : pick(preferStation) ? preferStation
+    : pick(remembered) ? remembered
+    : pick(HOME_STATION) ? HOME_STATION
     : available[0].plugin_id;
   await activateStation(target);
 }
@@ -801,20 +811,13 @@ $('sidebarPlugins').onclick = () => openPluginManager();
 
 // ---------------------------------------------------------------- workspaces
 
-async function loadWorkspaces(selectPath = null, { restoreMemory = true } = {}) {
+async function loadWorkspaces(selectPath = null, { restoreMemory = true, station = null } = {}) {
   const pushAfter = !skipHistory;
   if (pushAfter) kernel.boardPath = [];
   const prevSkip = skipHistory;
   skipHistory = true;
   try {
     kernel.workspaces = await request('/api/workspaces');
-    workspaceSelect.replaceChildren();
-    for (const ws of kernel.workspaces) {
-      const option = document.createElement('option');
-      option.value = ws.root_path;
-      option.textContent = (ws.label || ws.root_path) + (ws.exists === false ? ' ⚠ missing on disk' : '');
-      workspaceSelect.append(option);
-    }
     // A contribution (the launchpad) may ask the kernel to switch workspaces.
     if (!kernel._switchHooked) {
       kernel._switchHooked = true;
@@ -826,14 +829,13 @@ async function loadWorkspaces(selectPath = null, { restoreMemory = true } = {}) 
     const wanted = selectPath || kernel.workspace?.root_path || uiMemory.read().workspace || kernel.workspaces[0]?.root_path;
     kernel.workspace = kernel.workspaces.find(ws => ws.root_path === wanted) || kernel.workspaces[0] || null;
     if (kernel.workspace) {
-      workspaceSelect.value = kernel.workspace.root_path;
       uiMemory.patch(s => { s.workspace = kernel.workspace.root_path; });
     }
     kernel.selection = null;
     kernel.card = null;
     bus.emit('workspace', kernel.workspace);
     await loadPrefs().catch(showError);
-    await recompose(false);
+    await recompose(false, station);
     await renderSidebar().catch(showError);
     if (restoreMemory) {
       const rememberedFile = kernel.workspace ? uiMemory.read().selection?.[kernel.workspace.root_path] : null;
@@ -1200,10 +1202,6 @@ $('closePluginManager').onclick = () => pluginManager.close();
 $('newWorkspace').onclick = openWorkspaceDialog;
 $('closeWorkspaceDialog').onclick = () => workspaceDialog.close();
 $('workspaceForm').addEventListener('submit', createWorkspace);
-workspaceSelect.onchange = async () => {
-  if (navigationBlocked()) { workspaceSelect.value = kernel.workspace?.root_path || ''; return; }
-  await loadWorkspaces(workspaceSelect.value).catch(showError);
-};
 
 document.addEventListener('click', event => {
   if (!stationBar.contains(event.target)) closeNavDrops();
@@ -1215,7 +1213,7 @@ async function applyState(state) {
     kernel.boardPath = Array.isArray(state.path) ? state.path.map(String) : [];
     const wantWs = state.ws || null;
     const haveWs = kernel.workspace?.root_path || null;
-    if (wantWs !== haveWs) await loadWorkspaces(wantWs, { restoreMemory: false });
+    if (wantWs !== haveWs) await loadWorkspaces(wantWs, { restoreMemory: false, station: state.station });
     if (state.station && state.station !== kernel.activeStation) {
       await activateStation(state.station);
     } else {
@@ -1246,7 +1244,7 @@ async function boot() {
   skipHistory = true;
   try {
     kernel.boardPath = state.path || [];
-    await loadWorkspaces(state.ws, { restoreMemory: !fromUrl });
+    await loadWorkspaces(state.ws, { restoreMemory: !fromUrl, station: fromUrl ? state.station : null });
     if (fromUrl) {
       if (state.station && state.station !== kernel.activeStation) await activateStation(state.station);
       else bus.emit('board-path', { path: kernel.boardPath, source: 'history' });

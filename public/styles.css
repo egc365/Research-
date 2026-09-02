@@ -60,7 +60,6 @@ body { margin: 0; background: var(--background); color: var(--text);
 .shell.sidebar-collapsed .sidebar { display: none; }
 .sidebar-head { display: flex; gap: 6px; align-items: center;
   padding: var(--spacing); border-bottom: 1px solid var(--border); flex: none; }
-.sidebar-head select { flex: 1; min-width: 0; }
 .sidebar-body { flex: 1; overflow: auto; padding: calc(var(--spacing) * .6); }
 .sidebar-foot { flex: none; border-top: 1px solid var(--border);
   padding: calc(var(--spacing) * .6); display: flex; gap: 6px; }

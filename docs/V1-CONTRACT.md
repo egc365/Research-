@@ -22,7 +22,7 @@ lifecycle, selected workspace/file/card, active station, event bus + service
 routing, status line, dirty-guard veto. Every screen with a name arrives as a
 plugin; the custom-station feature proves stations need no code.
 CONSEQUENCE: `public/kernel.js` stays the only file allowed to touch
-`#stage`, `#stationBar`, `#workspaceSelect`. Nothing else is added to it.
+`#stage`, `#stationBar`. Nothing else is added to it.
 TEST: delete every row in `workspace_plugins` for a workspace → the app still
 renders the empty frame, the workspace picker, and the plugin manager.
 

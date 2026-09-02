@@ -198,6 +198,10 @@ test('file-workbench is retired: no station row, no wiring, category on every su
   const catalog = store.listCatalog();
   assert.equal(catalog.some(r => r.plugin_id === 'file-workbench'), false);
   for (const row of catalog.filter(r => r.plugin_kind === 'station')) {
+    if (row.plugin_id === 'dashboard-viewer') {
+      assert.equal(row.manifest.category, undefined, 'Board is the frame, not a nav group');
+      continue;
+    }
     assert.ok(row.manifest.category, `${row.plugin_id} has a nav category`);
   }
   assert.equal(defaultWiring['file-workbench'], undefined);
@@ -279,7 +283,7 @@ test('planning-board-only workspaces get dashboard-viewer enabled once', t => {
   store.applyStationEnables(stationEnables);
   const enabled = root => store.workspacePlugins(root).filter(r => r.plugin_kind === 'station').map(r => r.plugin_id).sort();
   assert.ok(enabled(onlyBoard).includes('dashboard-viewer'));
-  assert.ok(!enabled(withCurate).includes('dashboard-viewer'));
+  assert.ok(enabled(withCurate).includes('dashboard-viewer'));
   assert.ok(enabled(already).includes('dashboard-viewer'));
   assert.deepEqual(enabled(empty), []);
   store.db.prepare("DELETE FROM workspace_plugins WHERE workspace_root=? AND plugin_id='dashboard-viewer'").run(path.resolve(onlyBoard));

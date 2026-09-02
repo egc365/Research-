@@ -13,8 +13,8 @@
 
 // Stations carry a `category` — the nav bar's functional delineation (owner
 // rule 2026-09-02: plugins grouped by function, not a flat board of tabs).
-// Plan = arranging work, Curate = the interrelated revision/validation/review
-// family, Monitor = read-only windows onto running machinery.
+// Curate = the interrelated revision/validation/review family, Monitor =
+// read-only windows onto running machinery. Board is the ungrouped frame.
 export const stations = [
   {
     id: 'revision-center', label: 'Revision center', version: '1.2.0',
@@ -34,7 +34,7 @@ export const stations = [
     id: 'dashboard-viewer', label: 'Board', version: '1.2.0',
     manifest: {
       description: 'The workspace board: groups of real files, links and notes. This is the frame a workspace lands on.',
-      layout: 'main', slots: ['main'], icon: '🗂', category: 'Plan'
+      layout: 'main', slots: ['main'], icon: '🗂'
     }
   },
   {
@@ -169,16 +169,15 @@ export const wiringRemovals = [
   { id: '20260902-inbox-off-dashboard', stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'inbox' }
 ];
 
-// One-shot station enables. Workspaces that had only planning-board (and
-// other retiring Plan stations) enabled would otherwise land on the empty
-// frame after retirement. Each id runs at most once ever — recorded in
-// app_meta. Must run before retirePlugins, while the old rows still exist.
+// One-shot station enables. Workspaces that had planning-board enabled
+// get dashboard-viewer so an owner-enabled Board survives retirement.
+// Each id runs at most once ever — recorded in app_meta. Must run before
+// retirePlugins, while the old rows still exist.
 export const stationEnables = [
   {
     id: '20260902-planning-board-to-dashboard',
     fromPluginId: 'planning-board',
-    toPluginId: 'dashboard-viewer',
-    ignorePluginIds: ['planning-board', 'project-creator']
+    toPluginId: 'dashboard-viewer'
   }
 ];
 
