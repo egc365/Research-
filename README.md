@@ -52,9 +52,11 @@ Three levels:
 - **Contributions** (`plugin_kind='contribution'`) — behaviors coded once in
   `public/contrib/*.js` (filesystem-tree, markdown-editor,
   dual-document-view, diff-renderer, card-rail, amendment-editor,
+  board-view / whiteboard-view / folder-cards (the same card-view.js under
+  four source presets: board, folder, blocks, queue),
   revision-timeline, actor-filter, provenance-block, state-badge,
   promotion-control (validation language; Promote appears exactly once),
-  candidate-list (validation queue card wall), decision-controls,
+  candidate-list (the validation queue, card-view.js again), decision-controls,
   validation-result, label-editor (dialog from the tree; labels/path_labels in
   the crosswalk), project-create-form, trace-lanes-view,
   execution-state-view, inbox, activity-view). Stations compose them; no

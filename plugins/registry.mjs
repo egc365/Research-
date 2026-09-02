@@ -6,7 +6,10 @@
 //
 // Kinds:
 //   station      a user-facing composed tool; owns a layout of named slots
-//   contribution a behavior coded once, mounted into a slot by wiring rows
+//   contribution a behavior coded once, mounted into a slot by wiring rows;
+//                an optional `config` preset rides under the wiring row's own
+//                config_json (the card views share one entry and differ by
+//                `view`; the row's `source` and `appearance` keys stay its own)
 //   service      a server plugin (plugins/server/*.mjs) exposing actions
 //
 // Layouts the kernel knows: 'main', 'rail-main', 'main-side', 'rail-main-side'.
@@ -93,7 +96,7 @@ export const contributions = [
   { id: 'markdown-editor',    label: 'Editor',             entry: '/contrib/markdown-editor.js',    description: 'Edit the selected file. Save is checksum-guarded: a stale base shows both SHAs and never overwrites silently.' },
   { id: 'dual-document-view', label: 'Preserved | New',    entry: '/contrib/dual-document-view.js', description: 'The last promoted bytes beside the current working bytes, exact SHAs on both.' },
   { id: 'diff-renderer',      label: 'Continuous diff',    entry: '/contrib/diff-renderer.js',      description: 'Block-aligned diff between the preserved and working versions.' },
-  { id: 'card-rail',          label: 'Block cards',        entry: '/contrib/card-rail.js',          description: 'The selected document split into markdown blocks, one card per block, with the latest decision per card.' },
+  { id: 'card-rail',          label: 'Block cards',        entry: '/contrib/card-view.js', config: { view: 'blocks' }, description: 'Card view of the selected document, one card per markdown block with its latest decision; { source: \'transcript\' } on the wiring row reads the transcript index instead.' },
   { id: 'amendment-editor',   label: 'Amendment editor',   entry: '/contrib/amendment-editor.js',   description: 'Write an amendment against the selected card. Each save is rev N+1 in an append-only log; nothing touches the document.' },
   { id: 'decision-controls',  label: 'Decision controls',  entry: '/contrib/decision-controls.js',  description: 'Accept / needs-more-work on the selected card. Record-only owner verdicts; promotion deliberately lives elsewhere.' },
   { id: 'revision-timeline',  label: 'Timeline',           entry: '/contrib/revision-timeline.js',  description: 'Amendments and ledger events for the selected file, newest first.' },
@@ -102,14 +105,14 @@ export const contributions = [
   { id: 'provenance-block',   label: 'Provenance',         entry: '/contrib/provenance-block.js',   description: 'Registry row for the selected file: state, exact SHA-256, run and span ids, timestamps.' },
   { id: 'state-badge',        label: 'State badge',        entry: '/contrib/state-badge.js',        description: 'The lifecycle state of the selected file, colored, with its allowed next states.' },
   { id: 'promotion-control',  label: 'Validation controls', entry: '/contrib/promotion-control.js', description: 'Submit as candidate → run validation (mints receipts) → Promote. Promote is the single final verb: validated bytes to promoted authority, human-only.' },
-  { id: 'candidate-list',     label: 'Validation queue',   entry: '/contrib/candidate-list.js',     description: 'Card wall of registered artifacts by lifecycle state — path, SHAs, run/span, drift; clicking selects the file.' },
+  { id: 'candidate-list',     label: 'Validation queue',   entry: '/contrib/card-view.js', config: { view: 'queue' }, description: 'Card view of the registered artifacts grouped by lifecycle state: SHAs, run and span, drift. Clicking a card selects the file.' },
   { id: 'validation-result',  label: 'Validation',         entry: '/contrib/validation-result.js',  description: 'Deterministic validator results for the selected file, check by check.' },
   { id: 'project-create-form',label: 'New project form',   entry: '/contrib/project-create-form.js',description: 'Name a project; the form writes the folder + README through the governed write path.' },
   { id: 'label-editor',      label: 'Label editor',       entry: '/contrib/label-editor.js',       headless: true, description: 'Manage labels in a dialog opened from the tree (create, rename, recolor, describe, delete, assign) — stored in the SQLite crosswalk, owner-only writes. Occupies no screen space until opened.' },
   { id: 'launchpad',          label: 'Launchpad',          entry: '/contrib/launchpad.js',          description: 'Shown before a workspace is chosen: workspaces to enter. Still wireable into any station; the dashboard no longer mounts it by default.' },
   { id: 'apps-widget',        label: 'Apps',               entry: '/contrib/apps-widget.js',        description: 'A box the owner names and fills with station chips and links. Nothing is pre-grouped; items live in the wiring config.' },
   { id: 'inbox',              label: 'Inbox',              entry: '/contrib/inbox.js',              description: 'What needs the owner: candidates and validated artifacts awaiting a verdict. Point it at a folder with the workspace inbox preference { watch: \'outputs\' }, or the same key on a wiring row; the default watches nothing.' },
-  { id: 'folder-cards',       label: 'Folder cards',       entry: '/contrib/folder-cards.js',       description: 'Notion-style card view of a folder (the workspace root by default): one card per file or folder, with label chips.' },
+  { id: 'folder-cards',       label: 'Folder cards',       entry: '/contrib/card-view.js', config: { view: 'folder' }, description: 'Card view of one folder (the workspace root, or { path } on the wiring row): one card per file or folder with its labels and sticky note. Clicking a file selects it; a folder is revealed in the tree.' },
   { id: 'section-favorites',  label: 'Favorites',          entry: '/contrib/section-favorites.js',  description: 'Sidebar section: starred files and folders (star them in the tree).' },
   { id: 'section-projects',   label: 'Projects',           entry: '/contrib/section-projects.js',   description: 'Sidebar section: folders labeled ‘project’, nested, click to reveal in Files.' },
   { id: 'section-recent',     label: 'Recent',             entry: '/contrib/section-recent.js',     description: 'Sidebar section: last touched artifacts from the ledger.' },
@@ -118,8 +121,8 @@ export const contributions = [
   { id: 'tool-health-view',   label: 'Tool health',        entry: '/contrib/tool-health.js',        description: 'Port health board: probes the machine’s tools via the tool-health service and shows up/down with latency. Extra targets via wiring config { targets: [...] }.' },
   { id: 'transcript-search-view', label: 'Transcript search', entry: '/contrib/transcript-search.js', description: 'Bot cutover → session list → filtered deep search over native transcripts, via the transcript-search service.' },
   { id: 'trace-lanes-view',   label: 'Trace lanes',        entry: '/contrib/trace-lanes.js',        description: 'Tempo span lanes from :8885, iframe by default; URL overridable via wiring config { url }. Up/down via the tool-health service.' },
-  { id: 'board-view',         label: 'Board',              entry: '/contrib/board-view.js',         description: 'Planning board over the workspace: lanes laid out per orientation, folder cards drill into their surface, drag cards between lanes and to the floor; file cards select the file, links open, notes edit inline.' },
-  { id: 'whiteboard-view',    label: 'Whiteboard',         entry: '/contrib/board-view.js',         description: 'The same board plugin in memory: sketch lanes and cards, paste images, then Save to project to write the files flat under a folder and open it as a Board.' },
+  { id: 'board-view',         label: 'Board',              entry: '/contrib/card-view.js', config: { view: 'board' }, description: 'Card view of the workspace board: lanes laid out per orientation, folder cards drill into their surface, drag cards between lanes and to the floor. File cards select the file, links open, notes edit inline.' },
+  { id: 'whiteboard-view',    label: 'Whiteboard',         entry: '/contrib/card-view.js', config: { view: 'board', mode: 'whiteboard' }, description: 'Card view of the board in memory: sketch lanes and cards, paste images, then Save to project to write the files flat under a folder and open it as a Board.' },
   { id: 'gpu-governor-view',  label: 'GPU governor',       entry: '/contrib/gpu-governor-view.js',  description: 'Governor board: current snapshot, allowlist rules + which path is live, recent enforcement events newest first, link to the :7890 dashboard. Event tail size via wiring config { eventLimit: N }.' },
   { id: 'parakeet-view',      label: 'Parakeet STT',       entry: '/contrib/parakeet-view.js',      description: 'Parakeet status card: up/down chip, config summary, raw status JSON, owner-only start/stop listening buttons, 15s auto-refresh.' }
 ];
@@ -209,7 +212,7 @@ export function catalogRows(serverPlugins = []) {
   for (const c of contributions) {
     rows.push({ plugin_id: c.id, plugin_kind: 'contribution', label: c.label, version: c.version || '1.0.0',
       client_entry: c.entry, server_entry: null,
-      manifest_json: JSON.stringify({ description: c.description, ...(c.headless ? { headless: true } : {}) }) });
+      manifest_json: JSON.stringify({ description: c.description, ...(c.headless ? { headless: true } : {}), ...(c.config ? { config: c.config } : {}) }) });
   }
   for (const p of serverPlugins) {
     // A server plugin and a station may share a name (revision-center vs the

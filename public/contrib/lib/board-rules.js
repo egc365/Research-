@@ -181,7 +181,7 @@ export function imageDataUrl(ref) {
   const pad = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
   const bytes = Math.floor(base64.length * 3 / 4) - pad;
   if (bytes > MAX_IMAGE_BYTES) throw fail('BOARD_BAD_INPUT', 'Image is larger than 2 MB');
-  return { mime: m[1].toLowerCase(), base64, bytes };
+  return { mime: m[1].toLowerCase(), base64 };
 }
 
 // The file an image card becomes: the title's stem with the extension the

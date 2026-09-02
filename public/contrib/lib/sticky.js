@@ -1,4 +1,4 @@
-// Sticky-note rendering, shared by the board and the folder cards. The
+// Sticky-note rendering, shared by the card view's faces and sources. The
 // palette is defined here and imported by plugins/server/stickies.mjs (the
 // server refuses anything off it), so a note can never render in an
 // unreadable color. Classic office colors.
@@ -55,59 +55,4 @@ export function isolateStickyPointer(el) {
     if (e.target.tagName !== 'TEXTAREA' && e.target.tagName !== 'INPUT') e.preventDefault();
   });
   el.addEventListener('click', e => e.stopPropagation());
-}
-
-export function mountPathSticky(host, opts) {
-  const {
-    note,
-    defaultColor = DEFAULT_COLOR,
-    editing = false,
-    placeholder = 'A few words…',
-    onBeginEdit,
-    onCancel,
-    onSave,
-  } = opts;
-
-  if (editing) {
-    const box = document.createElement('div');
-    styleSticky(box, note?.color || defaultColor);
-    box.style.marginTop = '6px';
-    isolateStickyPointer(box);
-    const area = document.createElement('textarea');
-    area.value = note?.text || '';
-    area.rows = 2;
-    area.placeholder = placeholder;
-    area.style.cssText = 'width:100%;background:rgba(255,255,255,.55);color:#222;border:1px solid rgba(0,0,0,.3);border-radius:4px;padding:2px 4px;font:inherit;resize:vertical';
-    let color = note?.color || defaultColor;
-    const palette = paletteEl(color, picked => { color = picked || defaultColor; styleSticky(box, color); });
-    const save = document.createElement('button');
-    save.textContent = note ? 'Save' : 'Stick it';
-    save.onclick = () => onSave(area.value, color);
-    area.onkeydown = e => { if (e.key === 'Escape') onCancel(); };
-    box.append(area, palette, save);
-    host.append(box);
-    return area;
-  }
-
-  if (note) {
-    const sticky = document.createElement('div');
-    styleSticky(sticky, note.color);
-    sticky.style.marginTop = '6px';
-    sticky.textContent = note.text;
-    sticky.title = 'Edit sticky';
-    sticky.onclick = () => onBeginEdit();
-    isolateStickyPointer(sticky);
-    host.append(sticky);
-    return null;
-  }
-
-  const add = document.createElement('button');
-  add.type = 'button';
-  add.textContent = '＋ sticky';
-  add.className = 'muted';
-  add.style.cssText = 'margin-top:6px;font-size:11px;background:none;border:1px dashed #555;border-radius:4px;color:inherit;cursor:pointer;padding:1px 6px;opacity:.6';
-  add.onclick = () => onBeginEdit();
-  isolateStickyPointer(add);
-  host.append(add);
-  return null;
 }

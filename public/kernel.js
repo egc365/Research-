@@ -626,6 +626,14 @@ function clearDropMarks() {
   }
 }
 
+// A contribution's catalog preset (manifest.config, e.g. the card view's
+// `view`) sits under the wiring row's own config_json; only the row's keys
+// are ever written back.
+function presetConfig(row) {
+  try { return JSON.parse(row.manifest_json || '{}').config || {}; } catch { return {}; }
+}
+
+// A null value, or an empty label, removes the key from the row.
 async function saveWiringConfig(stationId, slotName, contributionId, patch) {
   if (!stationId || !slotName || !contributionId) throw new Error('Cannot save wiring config');
   const row = (kernel.composition.stations[stationId] || []).find(
@@ -633,7 +641,7 @@ async function saveWiringConfig(stationId, slotName, contributionId, patch) {
   );
   const config = { ...(row?.config || {}) };
   for (const [key, value] of Object.entries(patch || {})) {
-    if (key === 'label' && !String(value || '').trim()) delete config.label;
+    if (value == null || (key === 'label' && !String(value).trim())) delete config[key];
     else config[key] = value;
   }
   await request('/api/composition/station', {
@@ -941,7 +949,7 @@ async function activateStation(stationId, { path } = {}) {
     mountResizeEdge(section, stationId, row.slot_name, row.contribution_id);
     try {
       const module = await loadModule(row);
-      const { ctx, dispose } = makeContext(stationId, row.config, null, {
+      const { ctx, dispose } = makeContext(stationId, { ...presetConfig(row), ...row.config }, null, {
         contributionId: row.contribution_id,
         slotName: row.slot_name
       });
@@ -1272,12 +1280,15 @@ function renderPluginManager() {
         label.textContent = slotName;
         wiring.append(label);
         for (const row of wired.filter(r => r.slot_name === slotName)) {
-          const desc = catalogById.get(row.contribution_id)?.manifest?.description || '';
+          const manifest = catalogById.get(row.contribution_id)?.manifest || {};
+          const desc = manifest.description || '';
+          const cardView = Boolean(manifest.config?.view);
           const line = document.createElement('div');
           line.className = 'pm-wire-row';
-          line.innerHTML = `<div><span>${esc(row.label)}</span>${desc ? `<div class="desc">${esc(desc)}</div>` : ''}</div>
+          line.innerHTML = `<div>${cardView ? '<span class="pm-kind">card view</span> ' : ''}<span>${esc(row.label)}</span>${desc ? `<div class="desc">${esc(desc)}</div>` : ''}</div>
             <button class="danger" title="Remove from this slot">✕</button>`;
-          line.querySelector('button').onclick = () =>
+          if (cardView) line.insertBefore(appearanceSelect(station.plugin_id, slotName, row), line.lastElementChild);
+          line.querySelector('button.danger').onclick = () =>
             wireContribution(station.plugin_id, slotName, row.contribution_id, true).catch(showError);
           wiring.append(line);
         }
@@ -1302,6 +1313,30 @@ function renderPluginManager() {
     }
     pluginManagerBody.append(box);
   }
+}
+
+// The appearance every card in a card-view box takes unless the card carries
+// its own face: card (the file), sticky (the folder), icon (compact).
+// Persists as config_json.appearance on the wiring row and remounts the box.
+function appearanceSelect(stationId, slotName, row) {
+  const select = document.createElement('select');
+  select.dataset.role = 'appearance';
+  select.title = 'Appearance of the cards in this box';
+  for (const [value, text] of [['', 'per card'], ['card', 'card'], ['sticky', 'sticky'], ['icon', 'icon']]) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = text;
+    select.append(option);
+  }
+  select.value = row.config?.appearance || '';
+  select.onchange = async () => {
+    try {
+      await saveWiringConfig(stationId, slotName, row.contribution_id, { appearance: select.value || null });
+      await recompose();
+      renderPluginManager();
+    } catch (error) { showError(error); }
+  };
+  return select;
 }
 
 function openPluginManager(stationId) {

@@ -129,6 +129,13 @@ function apply(state, action, payload) {
       if (title == null) title = name;
     } else if (kind === 'file') {
       ref = childRel(surface, needName(payload.name));
+      // The same refusal the server gives a re-dropped file, so Save never
+      // has to rename a second copy.
+      const carded = state.cards.find(c => c.surface === surface && c.kind === 'file' && c.ref === ref);
+      if (carded) {
+        const where = carded.lane_id == null ? 'on the floor' : `in lane ${mustLane(state, carded.lane_id).name}`;
+        throw fail('BOARD_DUPLICATE', `${ref} is already on this surface, ${where}`);
+      }
       body = payload.body == null ? '' : String(payload.body);
       if (title == null && body.trim()) title = body.trim().split('\n')[0];
     } else if (kind === 'image') {

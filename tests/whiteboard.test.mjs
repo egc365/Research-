@@ -67,13 +67,14 @@ function sketchModel() {
   };
 }
 
-test('whiteboard-view is board-view mounted with mode whiteboard', () => {
+test('whiteboard-view is the card view on the board source, mounted with mode whiteboard', () => {
   const station = stations.find(s => s.id === 'whiteboard');
   assert.ok(station);
   assert.equal(station.label, 'Whiteboard');
   assert.equal(station.manifest.category, undefined);
   const contrib = contributions.find(c => c.id === 'whiteboard-view');
-  assert.equal(contrib.entry, '/contrib/board-view.js');
+  assert.equal(contrib.entry, '/contrib/card-view.js');
+  assert.deepEqual(contrib.config, { view: 'board', mode: 'whiteboard' });
   assert.deepEqual(defaultWiring.whiteboard.main, [
     { id: 'whiteboard-view', config: { mode: 'whiteboard' } }
   ]);
@@ -254,4 +255,24 @@ test('Save from the memory store sends its rows and empties the sketch', async t
   assert.equal(fs.existsSync(path.join(ws.root, 'projects', 'P', 'task 1')), false);
   assert.equal(fs.readFileSync(path.join(ws.root, 'projects', 'P', 'plan.md'), 'utf8'), 'plan\n');
   assert.deepEqual(parseModel(bag.get(`ro.whiteboard.${ws.root}`)), emptyModel());
+});
+
+test('the memory store refuses a second file of the same name on a surface, as the server does', async t => {
+  const ws = workspace(t);
+  fakeStorage(t);
+  const ctx = {
+    workspace: { root_path: ws.root },
+    action: (id, action, payload) => plugin.action({ action, payload, surface: 'owner', store: ws.store })
+  };
+  const access = boardStore(ctx, { mode: 'whiteboard' });
+  const lane = await access.call('add-lane', { name: 'task 1' });
+  await access.call('add-card', { laneId: lane.lane_id, kind: 'file', name: 'plan.md', body: 'plan' });
+  await access.call('add-card', { kind: 'file', name: 'README.md' });
+  await assert.rejects(access.call('add-card', { kind: 'file', name: 'plan.md' }),
+    e => e.code === 'BOARD_DUPLICATE' && e.message === 'plan.md is already on this surface, in lane task 1');
+  await assert.rejects(access.call('add-card', { laneId: lane.lane_id, kind: 'file', name: 'README.md' }),
+    e => e.code === 'BOARD_DUPLICATE' && e.message === 'README.md is already on this surface, on the floor');
+  await access.call('add-card', { surface: 'elsewhere', kind: 'file', name: 'plan.md' });
+  const { lanes, cards } = await access.call('tree');
+  assert.deepEqual([cards.length, lanes[0].cards.length], [1, 1]);
 });
