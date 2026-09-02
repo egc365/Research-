@@ -1494,7 +1494,7 @@ function renderCustomize(tab = 'appearance') {
       <div class="muted" style="margin-bottom:8px">The dashboard's content blocks are wired in Plugins. Extra program links for THIS workspace feed the tool-health probe.</div>
       <div data-role="links"></div>
       <div class="pm-add"><input data-role="new-label" placeholder="label (e.g. Extraction app)">
-        <input data-role="new-url" class="mono" placeholder="http://127.0.0.1:7860">
+        <input data-role="new-url" class="mono" placeholder="http://127.0.0.1:8080">
         <button data-role="add">Add link</button></div>`;
     const host = pane.querySelector('[data-role="links"]');
     const saveLinks = async next => {

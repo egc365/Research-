@@ -1,3 +1,5 @@
+import { PROGRAM_DEFAULTS } from '../public/contrib/lib/programs.js';
+
 // The composition catalog: every station and contribution the app ships, plus
 // the default wiring between them. This file is the *declaration*; SQLite is
 // the *crosswalk*. Boot upserts these rows into ui_plugins (preserving the
@@ -147,7 +149,7 @@ export const defaultWiring = {
       'promotion-control'
     ]
   },
-  'dashboard-viewer': { main: ['board-view', 'apps-widget'] },
+  'dashboard-viewer': { main: ['board-view', { id: 'apps-widget', config: { items: PROGRAM_DEFAULTS } }] },
   'whiteboard': { main: [{ id: 'whiteboard-view', config: { mode: 'whiteboard' } }] },
   'provenance-viewer': {
     main: ['revision-timeline', 'activity-view'],
@@ -174,6 +176,20 @@ export const wiringAdditions = [
   { id: '20260902-trace-lanes-on-transcript-review', stationId: 'transcript-review', slotName: 'main', contributionId: 'trace-lanes-view', sortOrder: 20 },
   { id: '20260902-apps-widget-on-dashboard', stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'apps-widget', sortOrder: 20 },
   { id: '20260902-activity-on-provenance', stationId: 'provenance-viewer', slotName: 'main', contributionId: 'activity-view', sortOrder: 20 }
+];
+
+// One-shot config fills for wiring rows that already exist (the seeder
+// skips those stations). Missing keys only. Each id runs at most once
+// ever, recorded in app_meta, so an owner who later empties a box is
+// never refilled.
+export const wiringConfigSeeds = [
+  {
+    id: '20260902-apps-widget-program-items',
+    stationId: 'dashboard-viewer',
+    slotName: 'main',
+    contributionId: 'apps-widget',
+    config: { items: PROGRAM_DEFAULTS }
+  }
 ];
 
 // One-shot wiring removals for stations that already have owner rows (the

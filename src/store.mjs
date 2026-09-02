@@ -520,6 +520,37 @@ export class ControlStore {
     }
   }
 
+  // Fill missing keys on an existing wiring row's config_json. Each seed id
+  // runs at most once ever, recorded in app_meta, so an owner who later
+  // clears a key is never fought with.
+  applyWiringConfigSeeds(seeds = []) {
+    const seen = this.db.prepare('SELECT value FROM app_meta WHERE key=?');
+    const mark = this.db.prepare('INSERT OR REPLACE INTO app_meta(key,value) VALUES(?,?)');
+    const get = this.db.prepare(
+      'SELECT config_json FROM station_contributions WHERE station_id=? AND slot_name=? AND contribution_id=?'
+    );
+    const update = this.db.prepare(
+      'UPDATE station_contributions SET config_json=? WHERE station_id=? AND slot_name=? AND contribution_id=?'
+    );
+    for (const seed of seeds) {
+      const key = `wiring-config-seed:${seed.id}`;
+      if (seen.get(key)) continue;
+      const row = get.get(seed.stationId, seed.slotName, seed.contributionId);
+      if (row) {
+        const cfg = row.config_json ? JSON.parse(row.config_json) : {};
+        let changed = false;
+        for (const [k, v] of Object.entries(seed.config || {})) {
+          if (cfg[k] === undefined) {
+            cfg[k] = v;
+            changed = true;
+          }
+        }
+        if (changed) update.run(JSON.stringify(cfg), seed.stationId, seed.slotName, seed.contributionId);
+      }
+      mark.run(key, new Date().toISOString());
+    }
+  }
+
   // Wiring removals for stations whose rows already exist (the seeder skips
   // those). Each removal id runs at most once ever, recorded in app_meta,
   // so an owner who later re-adds the contribution is never fought with.
