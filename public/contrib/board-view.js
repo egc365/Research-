@@ -4,6 +4,8 @@
 // (serial execution order). Click a group title to drill in, breadcrumb to
 // climb back, drag cards to reorder or move between groups. Every mutation
 // goes through the 'board' service and the whole view repaints from 'tree'.
+import { styleSticky, paletteEl } from '/contrib/lib/sticky.js';
+
 export function mount(el, ctx) {
   let disposed = false;
   let crumb = [];      // [{group_id, title}] from root down to the open group
@@ -123,16 +125,21 @@ export function mount(el, ctx) {
       a.href = card.ref; a.target = '_blank'; a.rel = 'noopener';
       a.textContent = `\u{1F517} ${card.title || card.ref}`;
       c.appendChild(a);
-    } else { // note: dblclick edits in place via rename
-      c.textContent = card.title || card.ref;
+    } else { // note: a sticky — colored, writable surface; dblclick edits in place
+      styleSticky(c, card.color);
+      c.style.minHeight = '56px';
+      const face = div('', card.title || card.ref);
+      c.appendChild(face);
+      c.appendChild(paletteEl(card.color, color => mutate('set-color', { cardId: card.card_id, color })));
       c.ondblclick = () => {
-        const input = document.createElement('input');
+        const input = document.createElement('textarea');
         input.value = card.title || card.ref;
-        input.style.cssText = 'width:100%;background:#1b1b1f;color:inherit;border:1px solid #555;border-radius:4px;padding:2px 4px';
-        c.textContent = ''; c.appendChild(input); input.focus();
+        input.rows = 3;
+        input.style.cssText = 'width:100%;background:rgba(255,255,255,.55);color:#222;border:1px solid rgba(0,0,0,.3);border-radius:4px;padding:2px 4px;font:inherit;resize:vertical';
+        face.textContent = ''; face.appendChild(input); input.focus();
         const commit = () => { const v = input.value.trim(); v && v !== (card.title || card.ref) ? mutate('rename', { cardId: card.card_id, title: v }) : repaint(); };
         input.onblur = commit;
-        input.onkeydown = e => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') repaint(); };
+        input.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) input.blur(); if (e.key === 'Escape') repaint(); };
       };
     }
     return c;

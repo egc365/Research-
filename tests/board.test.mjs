@@ -125,6 +125,29 @@ test('a pre-existing deeper tree still renders — the cap gates mutations only'
   assert.equal(groups[0].groups[0].groups[0].groups[0].title, 'legacy-depth-4');
 });
 
+test('sticky colors: column added to pre-existing boards, set-color validates the palette', async t => {
+  const root = workspace(t);
+  // Simulate a board created before the color column existed.
+  const { DatabaseSync } = await import('node:sqlite');
+  fs.mkdirSync(path.join(root, '.research-ops'), { recursive: true });
+  const old = new DatabaseSync(path.join(root, '.research-ops', 'board.sqlite3'));
+  old.exec(`
+    CREATE TABLE board_groups (group_id INTEGER PRIMARY KEY, parent_id INTEGER NULL, title TEXT NOT NULL,
+      orientation TEXT NOT NULL DEFAULT 'vertical', sort_order INTEGER NOT NULL DEFAULT 100, created_at TEXT NOT NULL);
+    CREATE TABLE board_cards (card_id INTEGER PRIMARY KEY, group_id INTEGER NOT NULL, kind TEXT NOT NULL,
+      ref TEXT NOT NULL, title TEXT, sort_order INTEGER NOT NULL DEFAULT 100, created_at TEXT NOT NULL);
+    INSERT INTO board_groups (title, orientation, sort_order, created_at) VALUES ('Old', 'vertical', 100, '2026-01-01');
+    INSERT INTO board_cards (group_id, kind, ref, sort_order, created_at) VALUES (1, 'note', 'pre-color note', 100, '2026-01-01');
+  `);
+  old.close();
+  const { STICKY_COLORS } = await import('../plugins/server/stickies.mjs');
+  const colored = await act(root, 'set-color', { cardId: 1, color: STICKY_COLORS[3] });
+  assert.equal(colored.color, STICKY_COLORS[3]);
+  await assert.rejects(act(root, 'set-color', { cardId: 1, color: '#123456' }), e => e.code === 'BOARD_BAD_INPUT');
+  const cleared = await act(root, 'set-color', { cardId: 1, color: null });
+  assert.equal(cleared.color, null);
+});
+
 test('agent surface may read the tree but never mutate', async t => {
   const root = workspace(t);
   const a = await act(root, 'add-group', { title: 'A' });

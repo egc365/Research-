@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { STICKY_COLORS } from './stickies.mjs';
 
 const handles = new Map();
 
@@ -38,6 +39,9 @@ function boardDb(rootPath) {
       created_at TEXT NOT NULL
     );
   `);
+  // Boards written before sticky colors existed lack the column; add it once.
+  const cardColumns = db.prepare('PRAGMA table_info(board_cards)').all().map(c => c.name);
+  if (!cardColumns.includes('color')) db.exec('ALTER TABLE board_cards ADD COLUMN color TEXT');
   handles.set(root, db);
   return db;
 }
@@ -163,6 +167,15 @@ export const plugin = {
       mustGroup(db, Number(payload.groupId));
       db.prepare('UPDATE board_groups SET title=? WHERE group_id=?').run(title, Number(payload.groupId));
       return mustGroup(db, Number(payload.groupId));
+    }
+
+    if (action === 'set-color') {
+      // The sticky palette is the whole choice space; null clears back to default.
+      const color = payload.color == null ? null : String(payload.color);
+      if (color != null && !STICKY_COLORS.includes(color)) throw fail('BOARD_BAD_INPUT', `Not a sticky color: ${color}`);
+      mustCard(db, Number(payload.cardId));
+      db.prepare('UPDATE board_cards SET color=? WHERE card_id=?').run(color, Number(payload.cardId));
+      return mustCard(db, Number(payload.cardId));
     }
 
     if (action === 'set-orientation') {
