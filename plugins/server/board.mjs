@@ -258,6 +258,15 @@ function laneDepth(db, laneId) {
   return depth;
 }
 
+// The lane and every lane under it, parents before children.
+function laneSubtree(db, laneId) {
+  const ids = [laneId];
+  for (let i = 0; i < ids.length; i++) {
+    for (const child of db.prepare('SELECT lane_id FROM board_lanes WHERE parent_lane_id=?').all(ids[i])) ids.push(child.lane_id);
+  }
+  return ids;
+}
+
 function subtreeHeight(db, laneId) {
   const children = db.prepare('SELECT lane_id FROM board_lanes WHERE parent_lane_id=?').all(laneId);
   let deepest = 0;
@@ -652,9 +661,15 @@ export const plugin = {
         db.prepare('DELETE FROM board_cards WHERE card_id=?').run(Number(payload.cardId));
         return { removed: 'card', cardId: Number(payload.cardId), disk: 'left' };
       }
-      mustLane(db, Number(payload.laneId));
-      db.prepare('DELETE FROM board_lanes WHERE lane_id=?').run(Number(payload.laneId));
-      return { removed: 'lane', laneId: Number(payload.laneId), disk: 'left' };
+      const lane = mustLane(db, Number(payload.laneId));
+      for (const id of laneSubtree(db, lane.lane_id)) {
+        for (const card of db.prepare('SELECT card_id FROM board_cards WHERE lane_id=? ORDER BY sort_order, card_id').all(id)) {
+          db.prepare('UPDATE board_cards SET lane_id=NULL, sort_order=? WHERE card_id=?')
+            .run(nextCardOrder(db, lane.surface, null), card.card_id);
+        }
+      }
+      db.prepare('DELETE FROM board_lanes WHERE lane_id=?').run(lane.lane_id);
+      return { removed: 'lane', laneId: lane.lane_id, disk: 'left', cards: 'floor' };
     }
 
     if (action === 'save-to-project') {

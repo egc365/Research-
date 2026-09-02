@@ -117,10 +117,15 @@ test('whiteboard store never calls the board service or the filesystem', async t
   const inside = await access.call('add-lane', { surface: 'howdy', name: 'inside' });
   await access.call('add-card', { surface: 'howdy', laneId: inside.lane_id, kind: 'file', name: 'deep.md' });
   await access.call('move-card', { cardId: file.card_id, toLaneId: null, sortOrder: 200 });
+  const doomed = await access.call('add-lane', { name: 'doomed' });
+  const survivor = await access.call('add-card', { laneId: doomed.lane_id, kind: 'note', ref: 'survivor' });
+  assert.equal((await access.call('remove', { laneId: doomed.lane_id })).cards, 'floor');
   const tree = await access.call('tree');
   assert.equal(tree.lanes[0].name, 'plans');
   assert.deepEqual(tree.lanes[0].cards.map(c => c.kind), ['note', 'image']);
-  assert.deepEqual(tree.cards.map(c => [c.kind, c.ref]), [['folder', 'howdy'], ['file', 'plan.md']]);
+  assert.deepEqual(tree.cards.map(c => [c.kind, c.ref]), [['folder', 'howdy'], ['file', 'plan.md'], ['note', 'survivor']]);
+  assert.equal(tree.lanes.length, 1);
+  assert.equal(survivor.lane_id, doomed.lane_id);
   const deeper = await access.call('tree', { surface: 'howdy' });
   assert.deepEqual(deeper.lanes[0].cards.map(c => c.ref), ['howdy/deep.md']);
   assert.equal(howdy.ref, 'howdy');
@@ -129,7 +134,7 @@ test('whiteboard store never calls the board service or the filesystem', async t
   assert.equal(fs.existsSync(path.join(ws.root, '.research-ops', 'board.sqlite3')), false);
   const stored = parseModel(bag.get(`ro.whiteboard.${ws.root}`));
   assert.equal(stored.lanes[0].name, 'plans');
-  assert.equal(stored.cards.length, 5);
+  assert.equal(stored.cards.length, 6);
 });
 
 test('Save writes files flat under the destination, lanes into the board, and LANES.json', async t => {

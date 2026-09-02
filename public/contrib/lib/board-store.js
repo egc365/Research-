@@ -387,7 +387,7 @@ function apply(state, action, payload) {
       return { removed: 'card', cardId: Number(payload.cardId), disk: 'none' };
     }
     const laneId = Number(payload.laneId);
-    mustLane(state, laneId);
+    const lane = mustLane(state, laneId);
     const ids = new Set([laneId]);
     let grew = true;
     while (grew) {
@@ -399,9 +399,13 @@ function apply(state, action, payload) {
         }
       }
     }
+    for (const card of [...state.cards].sort((a, b) => a.sort_order - b.sort_order || a.card_id - b.card_id)) {
+      if (card.lane_id == null || !ids.has(card.lane_id)) continue;
+      card.sort_order = nextOrder(state.cards, c => c.surface === lane.surface && c.lane_id == null);
+      card.lane_id = null;
+    }
     state.lanes = state.lanes.filter(l => !ids.has(l.lane_id));
-    state.cards = state.cards.filter(c => c.lane_id == null || !ids.has(c.lane_id));
-    return { removed: 'lane', laneId, disk: 'none' };
+    return { removed: 'lane', laneId, disk: 'none', cards: 'floor' };
   }
 
   throw new Error(`Unknown board action: ${action}`);

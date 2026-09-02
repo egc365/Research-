@@ -318,23 +318,40 @@ test('move-lane refuses a cycle; nesting stops at depth 3 on create and move', a
   assert.equal(lanes[1].lanes[0].lanes[0].name, 'A2');
 });
 
-test('remove drops rows, cascades to inner lanes, and leaves the disk alone', async t => {
+test('removing a card drops the row and leaves the disk alone', async t => {
   const ws = workspace(t);
-  const a = await act(ws, 'add-lane', { name: 'A' });
-  const a1 = await act(ws, 'add-lane', { name: 'A1', parentLaneId: a.lane_id });
-  await act(ws, 'add-card', { laneId: a1.lane_id, kind: 'note', ref: 'doomed' });
-  const card = await act(ws, 'add-card', { laneId: a.lane_id, kind: 'file', name: 'README.md', body: 'stay' });
   const folder = await act(ws, 'add-card', { kind: 'folder', name: 'plans' });
-  await act(ws, 'add-lane', { name: 'B' });
-  const removed = await act(ws, 'remove', { cardId: folder.card_id });
-  assert.equal(removed.disk, 'left');
+  const file = await act(ws, 'add-card', { kind: 'file', name: 'README.md', body: 'stay' });
+  assert.equal((await act(ws, 'remove', { cardId: folder.card_id })).disk, 'left');
+  assert.equal((await act(ws, 'remove', { cardId: file.card_id })).disk, 'left');
   assert.equal(fs.statSync(path.join(ws.root, 'plans')).isDirectory(), true);
-  assert.equal((await act(ws, 'remove', { laneId: a.lane_id })).disk, 'left');
   assert.equal(fs.readFileSync(path.join(ws.root, 'README.md'), 'utf8'), 'stay\n');
-  const { lanes, cards } = await act(ws, 'tree');
+  assert.deepEqual((await act(ws, 'tree')).cards, []);
+  await assert.rejects(act(ws, 'remove', { cardId: file.card_id }), e => e.code === 'BOARD_NOT_FOUND');
+});
+
+test('removing a lane drops its cards, and its inner lanes\' cards, to the floor of the same surface', async t => {
+  const ws = workspace(t);
+  fs.mkdirSync(path.join(ws.root, 'hello'));
+  const s = { surface: 'hello' };
+  const a = await act(ws, 'add-lane', { ...s, name: 'A' });
+  const a1 = await act(ws, 'add-lane', { ...s, name: 'A1', parentLaneId: a.lane_id });
+  await act(ws, 'add-lane', { ...s, name: 'B' });
+  const floor = await act(ws, 'add-card', { ...s, kind: 'note', ref: 'already on the floor' });
+  const inner = await act(ws, 'add-card', { ...s, laneId: a1.lane_id, kind: 'note', ref: 'inner' });
+  const file = await act(ws, 'add-card', { ...s, laneId: a.lane_id, kind: 'file', name: 'README.md', body: 'stay' });
+  const rootNote = await act(ws, 'add-card', { kind: 'note', ref: 'root surface' });
+  const removed = await act(ws, 'remove', { laneId: a.lane_id });
+  assert.equal(removed.cards, 'floor');
+  assert.equal(removed.disk, 'left');
+  const { lanes, cards } = await act(ws, 'tree', s);
   assert.deepEqual(lanes.map(l => l.name), ['B']);
-  assert.deepEqual(cards, []);
-  await assert.rejects(act(ws, 'remove', { cardId: card.card_id }), e => e.code === 'BOARD_NOT_FOUND');
+  assert.deepEqual(cards.map(c => [c.card_id, c.ref, c.lane_id]), [
+    [floor.card_id, 'already on the floor', null], [file.card_id, 'hello/README.md', null], [inner.card_id, 'inner', null]
+  ]);
+  assert.ok(cards[1].sort_order > cards[0].sort_order && cards[2].sort_order > cards[1].sort_order);
+  assert.deepEqual((await act(ws, 'tree')).cards.map(c => c.card_id), [rootNote.card_id]);
+  assert.equal(fs.readFileSync(path.join(ws.root, 'hello', 'README.md'), 'utf8'), 'stay\n');
 });
 
 test('a folder card adopts a folder already on disk and refuses a file at that path', async t => {
