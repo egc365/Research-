@@ -208,8 +208,13 @@ export class ControlStore {
     `).run(path.resolve(filePath), eventType, fromState, toState, checksum, actor, runId, spanId, metadata ? JSON.stringify(metadata) : null, now());
   }
 
-  writeFile({ rootPath, filePath, content, expectedChecksum, actor = 'human', runId = null, spanId = null }) {
+  writeFile({ rootPath, filePath, content, expectedChecksum, actor = 'human', runId = null, spanId = null, createOnly = false }) {
     const target = this.assertInsideWorkspace(rootPath, filePath);
+    if (createOnly && fs.existsSync(target)) {
+      const error = new Error('Already exists: ' + target);
+      error.code = 'ALREADY_EXISTS';
+      throw error;
+    }
     const beforeArtifact = this.getArtifact(target);
     const before = fs.existsSync(target) ? fs.readFileSync(target) : Buffer.from('');
     const actual = sha256(before);
@@ -265,7 +270,8 @@ export class ControlStore {
         metadata: { previous_checksum: actual }
       });
     }
-    return this.readFile(rootPath, target);
+    const read = this.readFile(rootPath, target);
+    return { ...read, relativePath: path.relative(path.resolve(rootPath), target) };
   }
 
   transition({ filePath, toState, actor = 'human', runId = null, spanId = null, metadata = null }) {

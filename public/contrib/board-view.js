@@ -26,14 +26,12 @@ export function mount(el, ctx) {
   let stickies = { notes: {} };
   let labels = {};
   let editingCardId = null;
-  let addingGroupId = null;
-  let addKind = 'note';
+  let adding = null; // { groupId: number|null } null groupId is the board floor
+  let addKind = 'folder';
   let addRef = '';
   let addBody = '';
   let addColor = null;
   let editColor = undefined;
-  let namingParent = undefined;
-  let namingTitle = '';
   let renamingGroupId = null;
   let pendingRemove = null;
   let removeTimer = 0;
@@ -42,18 +40,16 @@ export function mount(el, ctx) {
 
   const root = () => ctx.workspace?.root_path;
   const call = (action, payload = {}) => ctx.action('board', action, { rootPath: root(), ...payload });
-  const editorOpen = () => editingCardId != null || addingGroupId != null
-    || renamingGroupId != null || namingParent !== undefined;
+  const editorOpen = () => editingCardId != null || adding != null
+    || renamingGroupId != null;
   const mutate = (action, payload) => call(action, payload)
     .then(repaint)
     .catch(error => { ctx.notify(error.message, 'error'); repaint(); });
 
   function stopEditing() {
     editingCardId = null;
-    addingGroupId = null;
+    adding = null;
     renamingGroupId = null;
-    namingParent = undefined;
-    namingTitle = '';
     editColor = undefined;
   }
 
@@ -83,7 +79,7 @@ export function mount(el, ctx) {
   function faceBody(card) {
     if (card.kind === 'file') {
       const key = stickyKey(root(), card.ref);
-      return stickies.notes?.[key]?.text || '';
+      return stickies.notes?.[key]?.text || card.title || '';
     }
     if (card.kind === 'link') return card.title || '';
     const text = card.ref || '';
@@ -179,7 +175,7 @@ export function mount(el, ctx) {
 
   function removeBtn(kind, id, idleTitle) {
     const armed = pendingRemove && pendingRemove.kind === kind && pendingRemove.id === id;
-    const b = btn(armed ? 'delete?' : '✕', armed ? 'Confirm remove' : idleTitle, e => {
+    const b = btn(armed ? 'board only?' : '✕', armed ? 'Remove from the board. Files and folders stay on disk.' : idleTitle, e => {
       e.stopPropagation();
       if (pendingRemove && pendingRemove.kind === kind && pendingRemove.id === id) {
         clearTimeout(removeTimer);
@@ -189,8 +185,8 @@ export function mount(el, ctx) {
       }
       clearTimeout(removeTimer);
       pendingRemove = { kind, id };
-      b.textContent = 'delete?';
-      b.title = 'Confirm remove';
+      b.textContent = 'board only?';
+      b.title = 'Remove from the board. Files and folders stay on disk.';
       removeTimer = setTimeout(() => {
         if (pendingRemove && pendingRemove.kind === kind && pendingRemove.id === id) {
           pendingRemove = null;
@@ -202,30 +198,9 @@ export function mount(el, ctx) {
     return b;
   }
 
-  function groupNameEl(parentId) {
-    const form = document.createElement('form');
-    form.className = 'board-add-group';
-    form.style.cssText = 'display:inline-flex;margin-left:4px';
-    isolateStickyPointer(form);
-    form.addEventListener('submit', e => {
-      e.preventDefault();
-      const t = namingTitle.trim();
-      if (!t) return;
-      namingParent = undefined;
-      namingTitle = '';
-      mutate('add-group', parentId == null ? { title: t } : { parentId, title: t });
-    });
-    form.addEventListener('keydown', e => {
-      if (e.key === 'Escape') { e.preventDefault(); namingParent = undefined; namingTitle = ''; paint(); }
-    });
-    const input = document.createElement('input');
-    input.className = 'board-inline-name';
-    input.value = namingTitle;
-    input.placeholder = 'Group title';
-    input.style.cssText = 'width:120px;background:rgba(255,255,255,.55);color:#222;border:1px solid rgba(0,0,0,.3);border-radius:4px;padding:2px 6px;font:inherit';
-    input.oninput = () => { namingTitle = input.value; };
-    form.appendChild(input);
-    return form;
+  function hasReadme(group) {
+    const cards = group ? group.cards : (data.cards || []);
+    return cards.some(c => c.kind === 'file' && String(c.ref || '').split('/').pop() === 'README.md');
   }
 
   function saveCardBody(card, text) {
@@ -372,17 +347,17 @@ export function mount(el, ctx) {
     return c;
   }
 
-  function openAdd(group) {
+  function openAdd(group, depth) {
     stopEditing();
-    addingGroupId = group.group_id;
+    adding = { groupId: group ? group.group_id : null };
     addBody = '';
     addColor = null;
-    if (ctx.selection) {
-      addKind = 'file';
-      addRef = stickyKey(root(), ctx.selection.path);
-    } else {
-      addKind = 'note';
+    if (!group) {
+      addKind = 'folder';
       addRef = '';
+    } else {
+      addKind = 'file';
+      addRef = hasReadme(group) ? '' : 'README.md';
     }
     paint();
   }
@@ -392,51 +367,43 @@ export function mount(el, ctx) {
     const body = addBody;
     const color = addColor;
     const raw = addRef.trim();
-    let ref;
-    let title = null;
-    if (kind === 'note') {
-      ref = body.trim();
-      if (!ref) { ctx.notify('A note needs some text', 'error'); return; }
-      title = ref.split('\n')[0];
-    } else if (kind === 'file') {
-      if (!raw) { ctx.notify('A file card needs a path', 'error'); return; }
-      ref = stickyKey(root(), raw) || raw;
-      title = null;
-    } else {
-      if (!raw) { ctx.notify('A link card needs a URL', 'error'); return; }
-      ref = raw;
-      title = body.trim() || null;
-    }
+    const groupId = group ? group.group_id : null;
     try {
-      await call('add-card', { groupId: group.group_id, kind, ref, title, color });
+      if (kind === 'folder') {
+        if (!raw) { ctx.notify('A folder needs a name', 'error'); return; }
+        await call('add-card', { kind: 'folder', groupId, name: raw });
+      } else if (kind === 'file') {
+        if (!raw) { ctx.notify('A file needs a name', 'error'); return; }
+        await call('add-card', { kind: 'file', groupId, name: raw, body, color });
+      } else if (kind === 'note') {
+        const ref = body.trim();
+        if (!ref) { ctx.notify('A note needs some text', 'error'); return; }
+        await call('add-card', { groupId, kind, ref, title: ref.split('\n')[0], color });
+      } else {
+        if (!raw) { ctx.notify('A link card needs a URL', 'error'); return; }
+        await call('add-card', { groupId, kind, ref: raw, title: body.trim() || null, color });
+      }
     } catch (error) {
       ctx.notify(error.message, 'error');
       return;
     }
-    if (kind === 'file' && body.trim()) {
-      const key = stickyKey(root(), raw);
-      if (key && !key.startsWith('/')) {
-        try {
-          await ctx.action('stickies', 'set', { rootPath: root(), path: key, text: body, color: resolveColor({ kind: 'file', ref, color }) });
-        } catch (error) { ctx.notify(error.message, 'error'); }
-      }
-    }
-    addingGroupId = null;
-    addKind = 'note';
+    adding = null;
+    addKind = 'folder';
     addRef = '';
     addBody = '';
     addColor = null;
     repaint();
   }
 
-  function addFormEl(group) {
+  function addFormEl(group, depth) {
     const form = document.createElement('form');
     form.className = 'board-add-card';
-    styleSticky(form, resolveColor({ kind: addKind, ref: addRef, color: addColor }));
+    form.dataset.depth = String(depth);
+    styleSticky(form, resolveColor({ kind: addKind === 'folder' ? 'note' : addKind, ref: addRef, color: addColor }));
     isolateStickyPointer(form);
     form.addEventListener('submit', e => { e.preventDefault(); submitAdd(group); });
     form.addEventListener('keydown', e => {
-      if (e.key === 'Escape') { e.preventDefault(); addingGroupId = null; paint(); }
+      if (e.key === 'Escape') { e.preventDefault(); adding = null; paint(); }
       if (e.key === 'Enter' && !e.shiftKey && e.target.tagName === 'TEXTAREA') {
         e.preventDefault();
         form.requestSubmit();
@@ -444,46 +411,59 @@ export function mount(el, ctx) {
     });
 
     const kinds = div('display:flex;gap:4px;margin-bottom:4px');
-    for (const kind of ['file', 'link', 'note']) {
+    const offered = depth < 3 ? ['folder', 'file', 'link', 'note'] : ['file', 'link', 'note'];
+    for (const kind of offered) {
       const b = document.createElement('button');
       b.type = 'button';
       b.textContent = kind;
+      b.dataset.kind = kind;
       b.setAttribute('aria-pressed', addKind === kind ? 'true' : 'false');
-      b.onclick = () => { addKind = kind; paint(); };
+      b.onclick = () => {
+        addKind = kind;
+        if (kind === 'file' && !addRef) addRef = hasReadme(group) ? '' : 'README.md';
+        if (kind === 'folder') addRef = addRef === 'README.md' ? '' : addRef;
+        paint();
+      };
       kinds.appendChild(b);
     }
     form.appendChild(kinds);
 
-    if (addKind !== 'note') {
+    if (addKind === 'folder' || addKind === 'file' || addKind === 'link') {
       const lab = document.createElement('label');
-      lab.append(addKind === 'file' ? 'Path' : 'URL');
+      lab.append(addKind === 'folder' ? 'Name' : addKind === 'file' ? 'Name' : 'URL');
       const input = document.createElement('input');
       input.type = 'text';
+      input.className = 'board-inline-name';
       input.value = addRef;
+      input.placeholder = addKind === 'file' ? 'README.md' : addKind === 'folder' ? 'folder' : 'https://';
       input.oninput = () => { addRef = input.value; };
       lab.appendChild(input);
       form.appendChild(lab);
     }
 
-    const bodyLab = document.createElement('label');
-    bodyLab.append('Body');
-    const area = document.createElement('textarea');
-    area.rows = 3;
-    area.value = addBody;
-    area.oninput = () => { addBody = area.value; };
-    bodyLab.appendChild(area);
-    form.appendChild(bodyLab);
+    if (addKind === 'file' || addKind === 'note' || addKind === 'link') {
+      const bodyLab = document.createElement('label');
+      bodyLab.append(addKind === 'file' ? 'First line' : 'Body');
+      const area = document.createElement('textarea');
+      area.rows = addKind === 'file' ? 1 : 3;
+      area.value = addBody;
+      area.oninput = () => { addBody = area.value; };
+      bodyLab.appendChild(area);
+      form.appendChild(bodyLab);
+    }
 
-    form.appendChild(paletteEl(addColor, color => { addColor = color; paint(); }));
+    if (addKind === 'file' || addKind === 'note' || addKind === 'link') {
+      form.appendChild(paletteEl(addColor, color => { addColor = color; paint(); }));
+    }
 
     const submit = document.createElement('button');
     submit.type = 'submit';
-    submit.textContent = 'Stick it';
+    submit.textContent = addKind === 'folder' ? 'Create folder' : addKind === 'file' ? 'Create file' : 'Stick it';
     form.appendChild(submit);
     return form;
   }
 
-  function headerEl(group) {
+  function headerEl(group, depth) {
     const h = document.createElement('header');
     h.style.cssText = 'display:flex;align-items:center;gap:4px;padding:4px 6px;border-bottom:1px solid #333';
     if (renamingGroupId === group.group_id) {
@@ -515,36 +495,38 @@ export function mount(el, ctx) {
       };
       h.appendChild(title);
     }
+    if (!group.folder_path) {
+      const mark = div('font-size:11px;opacity:.7', 'unbound');
+      mark.className = 'board-unbound';
+      h.appendChild(mark);
+      h.appendChild(btn('bind to folder', 'Create the folder by this group name', e => {
+        e.stopPropagation();
+        mutate('bind-group', { groupId: group.group_id });
+      }));
+    }
     h.appendChild(btn('✎', 'Rename group', e => {
       e.stopPropagation();
       stopEditing();
       renamingGroupId = group.group_id;
       paint();
     }));
-    h.appendChild(btn('＋', 'Add card', () => openAdd(group)));
-    h.appendChild(btn('⊞', 'Add subgroup', () => {
-      stopEditing();
-      namingParent = group.group_id;
-      namingTitle = '';
-      paint();
-    }));
-    if (namingParent === group.group_id) h.appendChild(groupNameEl(group.group_id));
+    h.appendChild(btn('＋', 'Add file or folder', () => openAdd(group, depth)));
     h.appendChild(btn(`⇄ ${group.orientation}`, `Orientation: ${group.orientation} (toggle)`, e => {
       e.stopPropagation();
       mutate('set-orientation', { groupId: group.group_id, orientation: group.orientation === 'vertical' ? 'horizontal' : 'vertical' });
     }));
-    h.appendChild(removeBtn('group', group.group_id, 'Remove group'));
+    h.appendChild(removeBtn('group', group.group_id, 'Remove group from the board. The folder stays on disk.'));
     return h;
   }
 
-  function bodyEl(group) {
+  function bodyEl(group, depth) {
     const horizontal = group.orientation === 'horizontal';
     const body = div(`display:flex;flex-direction:${horizontal ? 'row' : 'column'};align-items:${horizontal ? 'flex-start' : 'stretch'};flex-wrap:${horizontal ? 'wrap' : 'nowrap'};padding:4px;min-height:40px`);
     body.className = 'cards';
-    for (const sub of group.groups) body.appendChild(groupEl(sub));
+    for (const sub of group.groups) body.appendChild(groupEl(sub, depth + 1));
     for (const card of group.cards) body.appendChild(cardEl(card, group));
-    if (addingGroupId === group.group_id) body.appendChild(addFormEl(group));
-    if (!group.groups.length && !group.cards.length && addingGroupId !== group.group_id) {
+    if (adding && adding.groupId === group.group_id) body.appendChild(addFormEl(group, depth));
+    if (!group.groups.length && !group.cards.length && !(adding && adding.groupId === group.group_id)) {
       body.appendChild(div('opacity:.5;font-size:12px;padding:6px', 'empty — drop cards here'));
     }
     acceptDrag(body);
@@ -556,11 +538,12 @@ export function mount(el, ctx) {
     return body;
   }
 
-  function groupEl(group) {
+  function groupEl(group, depth) {
     const tile = div('border:1px solid #3a3a3a;border-radius:8px;margin:6px;background:#1f1f23;min-width:180px;flex:0 1 auto');
     tile.className = 'board-group group';
     tile.dataset.groupId = String(group.group_id);
     tile.dataset.orientation = group.orientation;
+    if (group.folder_path) tile.dataset.folder = group.folder_path;
     tile.draggable = !editorOpen();
     tile.addEventListener('dragstart', e => {
       e.stopPropagation();
@@ -568,8 +551,8 @@ export function mount(el, ctx) {
       dragGroupId = group.group_id;
     });
     tile.addEventListener('dragend', () => { dragGroupId = null; });
-    tile.appendChild(headerEl(group));
-    tile.appendChild(bodyEl(group));
+    tile.appendChild(headerEl(group, depth));
+    tile.appendChild(bodyEl(group, depth));
     return tile;
   }
 
@@ -590,12 +573,7 @@ export function mount(el, ctx) {
   }
 
   function addTopGroupBtn() {
-    const add = btn('＋ group', 'Add top-level group', () => {
-      stopEditing();
-      namingParent = null;
-      namingTitle = '';
-      paint();
-    });
+    const add = btn('＋ group', 'Add a folder or file at the workspace root', () => openAdd(null, 0));
     add.style.margin = '6px';
     return add;
   }
@@ -610,21 +588,22 @@ export function mount(el, ctx) {
       crumb = open.trail;
       el.appendChild(breadcrumbEl());
       const pane = div('');
-      pane.appendChild(headerEl(open.node));
-      pane.appendChild(bodyEl(open.node));
+      pane.appendChild(headerEl(open.node, crumb.length));
+      pane.appendChild(bodyEl(open.node, crumb.length));
       el.appendChild(pane);
-    } else if (!data.groups.length) {
+    } else if (!data.groups.length && !(data.cards || []).length) {
       el.appendChild(addTopGroupBtn());
-      if (namingParent === null) el.appendChild(groupNameEl(null));
+      if (adding && adding.groupId == null) el.appendChild(addFormEl(null, 0));
     } else {
       el.appendChild(breadcrumbEl());
       const top = div('display:flex;flex-direction:row;flex-wrap:wrap;align-items:flex-start;min-height:60px');
-      for (const g of data.groups) top.appendChild(groupEl(g));
+      for (const g of data.groups) top.appendChild(groupEl(g, 1));
+      for (const card of data.cards || []) top.appendChild(cardEl(card, { group_id: null, cards: data.cards, groups: data.groups }));
       acceptDrag(top);
       top.addEventListener('drop', e => { e.preventDefault(); if (dragGroupId != null) dropGroup(null); });
       el.appendChild(top);
       el.appendChild(addTopGroupBtn());
-      if (namingParent === null) el.appendChild(groupNameEl(null));
+      if (adding && adding.groupId == null) el.appendChild(addFormEl(null, 0));
     }
     const focus = el.querySelector('.board-card textarea')
       || el.querySelector('.board-add-card input, .board-add-card textarea')
