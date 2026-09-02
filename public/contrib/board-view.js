@@ -4,12 +4,14 @@
 // (serial execution order). Click a group title to drill in, breadcrumb to
 // climb back, drag cards to reorder or move between groups. Every mutation
 // goes through the 'board' service and the whole view repaints from 'tree'.
-import { styleSticky, paletteEl } from '/contrib/lib/sticky.js';
+import { styleSticky, paletteEl, stickyKey, mountPathSticky, DEFAULT_COLOR } from '/contrib/lib/sticky.js';
 
 export function mount(el, ctx) {
   let disposed = false;
   let crumb = [];      // [{group_id, title}] from root down to the open group
   let data = { groups: [] };
+  let stickies = { notes: {} };
+  let editingKey = null;
   let dragCardId = null;
   let dragGroupId = null;
 
@@ -104,8 +106,14 @@ export function mount(el, ctx) {
 
   function cardEl(card, group) {
     const c = div('border:1px solid #3a3a3a;border-radius:6px;padding:6px 8px;margin:4px;background:#26262b;cursor:grab;font-size:13px');
+    c.className = 'board-card';
+    c.dataset.kind = card.kind;
     c.draggable = true;
-    c.addEventListener('dragstart', e => { e.stopPropagation(); dragCardId = card.card_id; }); // don't also start the parent tile's group drag
+    c.addEventListener('dragstart', e => {
+      e.stopPropagation(); // don't also start the parent tile's group drag
+      if (e.target.closest('[data-sticky]')) { e.preventDefault(); return; }
+      dragCardId = card.card_id;
+    });
     c.addEventListener('dragend', () => { dragCardId = null; });
     acceptDrag(c);
     c.addEventListener('drop', e => {
@@ -120,6 +128,25 @@ export function mount(el, ctx) {
       c.title = card.ref;
       c.style.cursor = 'pointer';
       c.onclick = () => ctx.selectFile(card.ref).catch(error => ctx.notify(error.message, 'error'));
+      const key = stickyKey(root(), card.ref);
+      if (key) {
+        const note = stickies.notes?.[key];
+        if (editingKey === key) c.draggable = false;
+        const area = mountPathSticky(c, {
+          note,
+          defaultColor: DEFAULT_COLOR,
+          editing: editingKey === key,
+          placeholder: 'A few words on this file…',
+          onBeginEdit: () => { editingKey = key; paint(); },
+          onCancel: () => { editingKey = null; paint(); },
+          onSave: (text, color) => {
+            ctx.action('stickies', 'set', { rootPath: root(), path: key, text, color })
+              .then(() => { editingKey = null; repaint(); })
+              .catch(error => { ctx.notify(error.message, 'error'); editingKey = null; repaint(); });
+          },
+        });
+        if (area) queueMicrotask(() => area.focus());
+      }
     } else if (card.kind === 'link') {
       const a = document.createElement('a');
       a.href = card.ref; a.target = '_blank'; a.rel = 'noopener';
@@ -254,12 +281,15 @@ export function mount(el, ctx) {
 
   function repaint() {
     if (!root()) { paint(); return; }
-    call('tree')
-      .then(t => { if (!disposed) { data = t; paint(); } })
+    Promise.all([
+      call('tree'),
+      ctx.action('stickies', 'list', { rootPath: root() }).catch(() => ({ notes: {} })),
+    ])
+      .then(([t, s]) => { if (!disposed) { data = t; stickies = s; paint(); } })
       .catch(error => { if (!disposed) { el.textContent = `Board failed: ${error.message}`; } });
   }
 
-  ctx.bus.on('workspace', () => { crumb = []; repaint(); });
+  ctx.bus.on('workspace', () => { crumb = []; editingKey = null; repaint(); });
   repaint();
   return () => { disposed = true; };
 }

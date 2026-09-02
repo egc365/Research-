@@ -6,40 +6,13 @@
 // note (the stickies service), so the filesystem itself communicates a little
 // planning information. Clicking a directory asks the tree to reveal it;
 // clicking a file broadcasts the kernel selection.
-import { styleSticky, paletteEl, colorForLabel } from '/contrib/lib/sticky.js';
+import { colorForLabel, mountPathSticky } from '/contrib/lib/sticky.js';
 
 export async function mount(el, ctx) {
   let editingPath = null; // sticky editor stays open across repaints
 
   const stickyCall = (action, payload = {}) =>
     ctx.action('stickies', action, { rootPath: ctx.workspace.root_path, ...payload });
-
-  function stickyEditor(host, entry, note, defaultColor) {
-    const box = document.createElement('div');
-    styleSticky(box, note?.color || defaultColor);
-    box.style.marginTop = '6px';
-    const area = document.createElement('textarea');
-    area.value = note?.text || '';
-    area.rows = 2;
-    area.placeholder = 'A few words on this folder…';
-    area.style.cssText = 'width:100%;background:rgba(255,255,255,.55);color:#222;border:1px solid rgba(0,0,0,.3);border-radius:4px;padding:2px 4px;font:inherit;resize:vertical';
-    let color = note?.color || defaultColor;
-    const palette = paletteEl(color, picked => { color = picked || defaultColor; styleSticky(box, color); });
-    const save = document.createElement('button');
-    save.textContent = note ? 'Save' : 'Stick it';
-    save.onclick = async e => {
-      e.stopPropagation();
-      try { await stickyCall('set', { path: entry.relativePath, text: area.value, color }); }
-      catch (error) { ctx.notify(error.message, 'error'); }
-      editingPath = null;
-      repaint();
-    };
-    box.append(area, palette, save);
-    box.onclick = e => e.stopPropagation();
-    area.onkeydown = e => { if (e.key === 'Escape') { editingPath = null; repaint(); } };
-    host.append(box);
-    return area;
-  }
 
   async function paint() {
     if (!ctx.workspace) { el.innerHTML = '<div class="empty">No workspace.</div>'; return; }
@@ -78,24 +51,21 @@ export async function mount(el, ctx) {
       // Color by function when a labeled path gets its first sticky: the same
       // label always suggests the same color; the palette overrides it.
       const defaultColor = colorForLabel(pathLabels[0]?.label);
-      if (editingPath === stickyPath) {
-        focusArea = stickyEditor(card, entry, note, defaultColor);
-      } else if (note) {
-        const sticky = document.createElement('div');
-        styleSticky(sticky, note.color);
-        sticky.style.marginTop = '6px';
-        sticky.textContent = note.text;
-        sticky.title = 'Edit sticky';
-        sticky.onclick = e => { e.stopPropagation(); editingPath = stickyPath; repaint(); };
-        card.append(sticky);
-      } else {
-        const add = document.createElement('button');
-        add.textContent = '＋ sticky';
-        add.className = 'muted';
-        add.style.cssText = 'margin-top:6px;font-size:11px;background:none;border:1px dashed #555;border-radius:4px;color:inherit;cursor:pointer;padding:1px 6px;opacity:.6';
-        add.onclick = e => { e.stopPropagation(); editingPath = stickyPath; repaint(); };
-        card.append(add);
-      }
+      const area = mountPathSticky(card, {
+        note,
+        defaultColor,
+        editing: editingPath === stickyPath,
+        placeholder: 'A few words on this folder…',
+        onBeginEdit: () => { editingPath = stickyPath; repaint(); },
+        onCancel: () => { editingPath = null; repaint(); },
+        onSave: async (text, color) => {
+          try { await stickyCall('set', { path: stickyPath, text, color }); }
+          catch (error) { ctx.notify(error.message, 'error'); }
+          editingPath = null;
+          repaint();
+        },
+      });
+      if (area) focusArea = area;
       grid.append(card);
     }
     if (focusArea) focusArea.focus();

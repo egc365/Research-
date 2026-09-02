@@ -35,3 +35,81 @@ export function paletteEl(current, onPick) {
   }
   return row;
 }
+
+// Board cards may store an absolute ref under the workspace root; the
+// stickies service keys by the workspace-relative path folder cards already use.
+export function stickyKey(rootPath, ref) {
+  const key = String(ref ?? '').trim();
+  if (!key) return '';
+  if (rootPath && (key === rootPath || key.startsWith(rootPath + '/'))) return key.slice(rootPath.length + 1);
+  return key;
+}
+
+// Keep pointer events on the note from selecting the card or starting a drag.
+// preventDefault on mousedown would steal textarea focus, so skip it there.
+export function isolateStickyPointer(el) {
+  el.dataset.sticky = '';
+  el.addEventListener('mousedown', e => {
+    e.stopPropagation();
+    if (e.target.tagName !== 'TEXTAREA' && e.target.tagName !== 'INPUT') e.preventDefault();
+  });
+  el.addEventListener('click', e => e.stopPropagation());
+  el.addEventListener('dragstart', e => { e.stopPropagation(); e.preventDefault(); });
+}
+
+export function mountPathSticky(host, opts) {
+  const {
+    note,
+    defaultColor = DEFAULT_COLOR,
+    editing = false,
+    placeholder = 'A few words…',
+    onBeginEdit,
+    onCancel,
+    onSave,
+  } = opts;
+
+  if (editing) {
+    const box = document.createElement('div');
+    box.className = 'path-sticky-editor';
+    styleSticky(box, note?.color || defaultColor);
+    box.style.marginTop = '6px';
+    isolateStickyPointer(box);
+    const area = document.createElement('textarea');
+    area.value = note?.text || '';
+    area.rows = 2;
+    area.placeholder = placeholder;
+    area.style.cssText = 'width:100%;background:rgba(255,255,255,.55);color:#222;border:1px solid rgba(0,0,0,.3);border-radius:4px;padding:2px 4px;font:inherit;resize:vertical';
+    let color = note?.color || defaultColor;
+    const palette = paletteEl(color, picked => { color = picked || defaultColor; styleSticky(box, color); });
+    const save = document.createElement('button');
+    save.textContent = note ? 'Save' : 'Stick it';
+    save.onclick = () => onSave(area.value, color);
+    area.onkeydown = e => { if (e.key === 'Escape') onCancel(); };
+    box.append(area, palette, save);
+    host.append(box);
+    return area;
+  }
+
+  if (note) {
+    const sticky = document.createElement('div');
+    sticky.className = 'path-sticky';
+    styleSticky(sticky, note.color);
+    sticky.style.marginTop = '6px';
+    sticky.textContent = note.text;
+    sticky.title = 'Edit sticky';
+    sticky.onclick = () => onBeginEdit();
+    isolateStickyPointer(sticky);
+    host.append(sticky);
+    return null;
+  }
+
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.textContent = '＋ sticky';
+  add.className = 'muted path-sticky-add';
+  add.style.cssText = 'margin-top:6px;font-size:11px;background:none;border:1px dashed #555;border-radius:4px;color:inherit;cursor:pointer;padding:1px 6px;opacity:.6';
+  add.onclick = () => onBeginEdit();
+  isolateStickyPointer(add);
+  host.append(add);
+  return null;
+}

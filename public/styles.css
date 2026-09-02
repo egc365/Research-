@@ -258,6 +258,9 @@ button:disabled { opacity: .45; cursor: default; }
 .folder-card:hover { border-color: var(--accent); }
 .folder-card .name { font-weight: 600; margin-bottom: 4px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
+/* Board file-card path stickies (not note cards; those stay styleSticky on the card) */
+.board-card[data-kind="file"] [data-sticky] { margin-top: 6px; }
+.board-card[data-kind="file"] .path-sticky-add { display: inline-block; }
 .side-row { display: flex; align-items: center; gap: 6px; padding: 2px 6px;
   border-radius: 4px; cursor: pointer; }
 .side-row:hover { background: var(--surface-alt); }
