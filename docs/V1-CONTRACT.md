@@ -466,14 +466,14 @@ version checks; reset = new run id; no auto-expiry in V1.
 **55. Optional.** KEEP — yes; it is a station like any other.
 
 **56. Hard-coded cards.** KEEP the expected answer — none exist: the
-dashboard is one wiring row (statistics-view). It stays that way.
+dashboard is one wiring row (the retired statistics contribution). It stays that way.
 
 **57/58. Default content.**
 DECISION: CHANGE — minimal per owner intent: counts by state (validation
 queue pressure) + most recent activity, both from the ledger, nothing else by
 default. Start-project and recent-files are contributions the owner wires in
-if wanted; statistics-view is trimmed to counts+recent.
-CONFLICT: statistics-view currently also renders event/actor breakdowns by
+if wanted; the retired statistics contribution is trimmed to counts+recent.
+CONFLICT: the retired statistics contribution currently also renders event/actor breakdowns by
 default. Queue item (trim; the fuller breakdown stays behind a toggle).
 
 ## N. PLUGIN MANAGER
@@ -524,7 +524,7 @@ untouched).
 | state-badge | MERGE → `document-properties`; retire standalone after queue item 1 |
 | project-create-form | KEEP (+ assigns `project` label) |
 | candidate-list | MERGE → card-rail source `registry` (queue) |
-| statistics-view | KEEP (trimmed default) |
+| retired statistics contribution | KEEP (trimmed default) |
 | execution-state-view | KEEP in catalog; unwired by default |
 
 Duplicates identified: state-badge/provenance-block (→ document-properties),
@@ -612,7 +612,7 @@ Workspace
                               diff-renderer(base=promoted), validation-result]
                          side[document-properties, promotion-control,
                               open-in via document-properties]
-     dashboard-viewer    main[statistics-view(trimmed)]
+     dashboard-viewer    main[retired statistics contribution (trimmed)]
      provenance-viewer   rail[filesystem-tree] main[revision-timeline]
                          side[actor-filter, provenance-block]
      project-creator     main[project-create-form]
@@ -680,7 +680,7 @@ Services: revision · governance · registry · diff · history · preflight
 7. **manifest.requires** — kernel mounts honest unavailable card.
 8. **wording pass** — "Preflight"→"write checks" in UI text; retire
    execution-state station (add to `retired`).
-9. **statistics-view trim** — counts + recent by default, breakdowns behind
+9. **retired statistics contribution trim** — counts + recent by default, breakdowns behind
    a toggle.
 10. **card session picker** — card-rail offers the session list when several
     sessions touched the file (parity with :8880).
