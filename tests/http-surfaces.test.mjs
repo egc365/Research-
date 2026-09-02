@@ -122,7 +122,8 @@ test('composition writes are unreachable from the agent surface', async () => {
 
     for (const [pathName, body] of [
       ['/api/composition/workspace', { rootPath: f.root, pluginId: 'dashboard-viewer' }],
-      ['/api/composition/station', { stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'card-rail' }]
+      ['/api/composition/station', { stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'card-rail' }],
+      ['/api/composition/station/move', { stationId: 'revision-center', contributionId: 'dual-document-view', fromSlot: 'main', toSlot: 'side' }]
     ]) {
       const denied = await call(f.agentBase, 'POST', pathName, body);
       assert.equal(denied.status, 403);
@@ -130,12 +131,25 @@ test('composition writes are unreachable from the agent surface', async () => {
     }
     // Nothing was enabled or rewired by the refused calls.
     assert.equal(f.store.composition(f.root).enabled.length, 0);
-    assert.deepEqual(f.store.stationContributions('dashboard-viewer').map(r => r.contribution_id), ['board-view']);
+    assert.deepEqual(f.store.stationContributions('dashboard-viewer').map(r => r.contribution_id), ['board-view', 'apps-widget']);
+    assert.equal(
+      f.store.stationContributions('revision-center').find(r => r.contribution_id === 'dual-document-view').slot_name,
+      'main'
+    );
 
     // The owner surface can do both, and reading composition works on both surfaces.
     assert.equal((await call(f.ownerBase, 'POST', '/api/composition/workspace', { rootPath: f.root, pluginId: 'dashboard-viewer' })).status, 200);
     const seenByAgent = await (await fetch(`${f.agentBase}/api/composition?root=${encodeURIComponent(f.root)}`)).json();
     assert.equal(seenByAgent.enabled.length, 1);
+    const moved = await call(f.ownerBase, 'POST', '/api/composition/station/move', {
+      stationId: 'revision-center', contributionId: 'dual-document-view', fromSlot: 'main', toSlot: 'side',
+      beforeContributionId: 'card-rail'
+    });
+    assert.equal(moved.status, 200);
+    assert.equal(
+      f.store.stationContributions('revision-center').find(r => r.contribution_id === 'dual-document-view').slot_name,
+      'side'
+    );
   } finally { await f.close(); }
 });
 

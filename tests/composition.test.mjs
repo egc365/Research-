@@ -69,7 +69,7 @@ test('owner wiring edits survive a reseed', t => {
   const { store } = freshStore(t);
   store.syncCatalog(catalogRows([]));
   store.seedStationWiring(defaultWiring);
-  for (const id of ['launchpad', 'board-view', 'inbox']) {
+  for (const id of ['launchpad', 'board-view', 'inbox', 'apps-widget']) {
     store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: id, remove: true });
   }
   store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'candidate-list', sortOrder: 10 });
@@ -211,12 +211,12 @@ test('file-workbench is retired: no station row, no wiring, category on every su
   assert.ok(!defaultWiring['dashboard-viewer'].main.includes('inbox'));
 });
 
-test('seeded dashboard is board only; planning-board and project-creator are retired', t => {
+test('seeded dashboard is board then apps-widget; planning-board and project-creator are retired', t => {
   const { store } = freshStore(t);
   store.syncCatalog(catalogRows([]));
   store.seedStationWiring(defaultWiring);
   const wired = store.stationContributions('dashboard-viewer').map(r => r.contribution_id);
-  assert.deepEqual(wired, ['board-view']);
+  assert.deepEqual(wired, ['board-view', 'apps-widget']);
   const catalog = store.listCatalog();
   const launchpad = catalog.find(r => r.plugin_id === 'launchpad');
   assert.ok(launchpad);
@@ -312,4 +312,103 @@ test('planning-board-only workspaces get dashboard-viewer enabled once', t => {
   assert.ok(!enabled(onlyBoard).includes('dashboard-viewer'));
   const meta = store.db.prepare("SELECT value FROM app_meta WHERE key=?").get('station-enable:20260902-planning-board-to-dashboard');
   assert.ok(meta);
+});
+
+test('wiring move changes slot_name and sort_order and keeps config_json', t => {
+  const { store } = freshStore(t);
+  store.syncCatalog(catalogRows([]));
+  store.seedStationWiring(defaultWiring);
+  store.setStationContribution({
+    stationId: 'revision-center', slotName: 'main', contributionId: 'apps-widget', sortOrder: 20,
+    config: { height: 240, label: 'My tools', items: [{ label: 'Trace lanes', url: 'http://127.0.0.1:8885' }] }
+  });
+  store.moveStationContribution({
+    stationId: 'revision-center', contributionId: 'apps-widget', fromSlot: 'main', toSlot: 'side',
+    beforeContributionId: 'card-rail'
+  });
+  const side = store.stationContributions('revision-center').filter(r => r.slot_name === 'side');
+  assert.deepEqual(side.map(r => r.contribution_id), [
+    'apps-widget', 'card-rail', 'amendment-editor', 'decision-controls', 'revision-timeline'
+  ]);
+  assert.deepEqual(side.map(r => r.sort_order), [10, 20, 30, 40, 50]);
+  const moved = side.find(r => r.contribution_id === 'apps-widget');
+  assert.equal(moved.config.height, 240);
+  assert.equal(moved.config.label, 'My tools');
+  assert.equal(moved.config.items[0].url, 'http://127.0.0.1:8885');
+  const main = store.stationContributions('revision-center').filter(r => r.slot_name === 'main');
+  assert.deepEqual(main.map(r => r.contribution_id), ['dual-document-view']);
+});
+
+test('wiring reorder drops between two boxes in the same slot', t => {
+  const { store } = freshStore(t);
+  store.syncCatalog(catalogRows([]));
+  store.seedStationWiring(defaultWiring);
+  store.moveStationContribution({
+    stationId: 'revision-center', contributionId: 'decision-controls',
+    fromSlot: 'side', toSlot: 'side', beforeContributionId: 'card-rail'
+  });
+  const side = store.stationContributions('revision-center').filter(r => r.slot_name === 'side');
+  assert.deepEqual(side.map(r => r.contribution_id), [
+    'decision-controls', 'card-rail', 'amendment-editor', 'revision-timeline'
+  ]);
+});
+
+test('a widget moves only between slots the station has', t => {
+  const { store } = freshStore(t);
+  store.syncCatalog(catalogRows([]));
+  store.seedStationWiring(defaultWiring);
+  store.setStationContribution({
+    stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'apps-widget', sortOrder: 20
+  });
+  assert.throws(
+    () => store.moveStationContribution({
+      stationId: 'dashboard-viewer', contributionId: 'apps-widget', fromSlot: 'main', toSlot: 'side'
+    }),
+    /no slot 'side'/
+  );
+  const still = store.stationContributions('dashboard-viewer').find(r => r.contribution_id === 'apps-widget');
+  assert.equal(still.slot_name, 'main');
+});
+
+test('config_json height and label round-trip on a wiring row', t => {
+  const { store, dir } = freshStore(t);
+  store.syncCatalog(catalogRows([]));
+  store.seedStationWiring(defaultWiring);
+  const ws = path.join(dir, 'ws-config'); fs.mkdirSync(ws);
+  store.addWorkspace(ws);
+  store.setWorkspacePlugin({ rootPath: ws, pluginId: 'dashboard-viewer' });
+  store.setStationContribution({
+    stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'apps-widget', sortOrder: 20,
+    config: { height: 240, label: 'My tools', items: [{ label: 'Revision center', station: 'revision-center' }] }
+  });
+  const row = store.stationContributions('dashboard-viewer').find(r => r.contribution_id === 'apps-widget');
+  assert.equal(row.config.height, 240);
+  assert.equal(row.config.label, 'My tools');
+  assert.deepEqual(row.config.items, [{ label: 'Revision center', station: 'revision-center' }]);
+  const raw = store.db.prepare(
+    "SELECT config_json FROM station_contributions WHERE station_id='dashboard-viewer' AND contribution_id='apps-widget'"
+  ).get();
+  assert.equal(JSON.parse(raw.config_json).label, 'My tools');
+  const composed = store.composition(ws).stations['dashboard-viewer'].find(r => r.contribution_id === 'apps-widget');
+  assert.equal(composed.config.label, 'My tools');
+  assert.equal(composed.config.height, 240);
+});
+
+test('apps-widget seeds on the dashboard and the one-shot addition runs once', t => {
+  const { store } = freshStore(t);
+  store.syncCatalog(catalogRows([]));
+  store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'board-view', sortOrder: 15 });
+  const addition = wiringAdditions.find(r => r.id === '20260902-apps-widget-on-dashboard');
+  assert.ok(addition);
+  assert.equal(addition.stationId, 'dashboard-viewer');
+  assert.equal(addition.slotName, 'main');
+  assert.equal(addition.contributionId, 'apps-widget');
+  store.applyWiringAdditions(wiringAdditions);
+  const wired = () => store.db.prepare(
+    "SELECT contribution_id FROM station_contributions WHERE station_id='dashboard-viewer' ORDER BY sort_order"
+  ).all().map(r => r.contribution_id);
+  assert.ok(wired().includes('apps-widget'));
+  store.db.prepare("DELETE FROM station_contributions WHERE contribution_id='apps-widget'").run();
+  store.applyWiringAdditions(wiringAdditions);
+  assert.ok(!wired().includes('apps-widget'));
 });
