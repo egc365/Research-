@@ -9,7 +9,7 @@ export function mount(el, ctx) {
       limit: 40,
       actor
     });
-    el.innerHTML = `<div class="card"><h3>Activity${actor ? ` — actor: ${ctx.esc(actor)}` : ''}</h3>
+    el.innerHTML = `<div class="card"><h3>Activity${actor ? `, actor: ${ctx.esc(actor)}` : ''}</h3>
       <div data-role="items"></div></div>`;
     const host = el.querySelector('[data-role="items"]');
     if (!rows.length) {

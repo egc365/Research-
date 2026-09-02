@@ -1,4 +1,4 @@
-// Contribution: Inbox — only items that need the owner's verdict.
+// Contribution: Inbox. Only items that need the owner's verdict.
 // Candidates and validated artifacts, grouped by workspace. A watch folder
 // (ctx.config.watch, workspace-relative; default none) lists files not yet
 // registered, with a one-click register-as-candidate. Activity lives elsewhere.
@@ -84,7 +84,6 @@ export function mount(el, ctx) {
             await ctx.request(`/api/file?root=${encodeURIComponent(root)}&path=${encodeURIComponent(file.path)}`);
             await ctx.action('governance', 'transition', { path: file.path, toState: 'candidate', actor: 'human' });
             ctx.bus.emit('artifact-changed', { path: file.path, state: 'candidate' });
-            await paint();
           } catch (error) {
             ctx.notify(error.message, 'error');
           }

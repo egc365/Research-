@@ -79,6 +79,30 @@ test('watch folder lists files that are not yet registered', t => {
   assert.equal(leftover[0].relativePath, 'outputs/draft.md');
 });
 
+test('watch folder lists files two levels deep, never deeper', t => {
+  const f = storeFixture(t);
+  const notes = path.join(f.root, 'outputs', 'notes.md');
+  const nested = path.join(f.root, 'outputs', 'paper-1', 'draft.md');
+  const tooDeep = path.join(f.root, 'outputs', 'paper-1', 'sub', 'hidden.md');
+  fs.mkdirSync(path.dirname(nested), { recursive: true });
+  fs.mkdirSync(path.dirname(tooDeep), { recursive: true });
+  fs.writeFileSync(notes, '# notes\n', 'utf8');
+  fs.writeFileSync(nested, '# nested\n', 'utf8');
+  fs.writeFileSync(tooDeep, '# hidden\n', 'utf8');
+  const rels = f.store.listUnregisteredWatch(f.root, 'outputs').map(row => row.relativePath).sort();
+  assert.deepEqual(rels, [
+    'outputs/draft.md',
+    'outputs/notes.md',
+    'outputs/paper-1/draft.md',
+    'outputs/report.md'
+  ]);
+  f.store.readFile(f.root, nested);
+  const leftover = f.store.listUnregisteredWatch(f.root, 'outputs').map(row => row.relativePath).sort();
+  assert.ok(!leftover.includes('outputs/paper-1/draft.md'));
+  assert.ok(!leftover.includes('outputs/paper-1/sub/hidden.md'));
+  assert.ok(leftover.includes('outputs/notes.md'));
+});
+
 test('GET /api/inbox returns verdicts and unregistered watch files', async t => {
   const f = await httpFixture(t);
   f.store.readFile(f.root, f.report);

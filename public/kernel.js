@@ -321,6 +321,7 @@ const HOME_STATION = 'dashboard-viewer';
 let inboxDispose = null;
 let inboxBadgeEl = null;
 let inboxBadgeStarted = false;
+let inboxBadgeTimer = null;
 
 function closeNavDrops() {
   if (inboxDispose) { inboxDispose(); inboxDispose = null; }
@@ -348,8 +349,15 @@ function startInboxBadge() {
   bus.on('artifact-changed', refresh);
   bus.on('file-saved', refresh);
   bus.on('workspace', refresh);
-  setInterval(refresh, 60_000);
+  inboxBadgeTimer = setInterval(refresh, 60_000);
 }
+
+window.addEventListener('beforeunload', () => {
+  if (inboxBadgeTimer) {
+    clearInterval(inboxBadgeTimer);
+    inboxBadgeTimer = null;
+  }
+});
 
 function stationButton(row) {
   const button = document.createElement('button');
@@ -1309,6 +1317,8 @@ function renderCustomize(tab = 'appearance') {
       <div class="ws-form">
         <label>Name <input data-role="ws-label" value="${esc(kernel.workspace.label || '')}"></label>
         <label>Icon (emoji, shown in the switcher) <input data-role="ws-icon" value="${esc(p.icon || '')}" maxlength="4" style="width:70px"></label>
+        <label>Inbox watches folder <input data-role="ws-inbox-watch" value="${esc(p.inbox?.watch || '')}" placeholder="outputs">
+          <span class="muted">workspace-relative; empty = off</span></label>
         <div class="muted mono" style="word-break:break-all">${esc(kernel.workspace.root_path)}</div>
         <div class="ws-actions" style="gap:6px">
           <button data-role="ws-remove" class="danger">Remove workspace…</button>
@@ -1321,7 +1331,8 @@ function renderCustomize(tab = 'appearance') {
         const label = pane.querySelector('[data-role="ws-label"]').value.trim() || null;
         await request('/api/workspaces', { method: 'POST', body: JSON.stringify({ rootPath: kernel.workspace.root_path, label }) });
         const icon = pane.querySelector('[data-role="ws-icon"]').value.trim();
-        await savePrefs({ icon });
+        const watch = pane.querySelector('[data-role="ws-inbox-watch"]').value.trim();
+        await savePrefs({ icon, inbox: { watch } });
         notify('Workspace updated.', 'ok');
         await loadWorkspaces(kernel.workspace.root_path);
         renderCustomize('workspace');

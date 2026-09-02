@@ -228,7 +228,7 @@ async function api(req, res, url, { store, plugins, surface }) {
     const root = url.searchParams.get('root');
     const watch = url.searchParams.get('watch') || '';
     return json(res, 200, {
-      verdicts: store.listVerdicts(null),
+      verdicts: store.listVerdicts(),
       unregistered: root && watch ? store.listUnregisteredWatch(root, watch) : []
     });
   }

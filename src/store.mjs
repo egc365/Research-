@@ -1067,26 +1067,15 @@ export class ControlStore {
   recentActivity(rootPath, limit = 12, actor = null) {
     const root = path.resolve(rootPath);
     const trash = path.join(root, '.research-ops');
-    if (actor) {
-      return this.db.prepare(`
-        SELECT e.path, MAX(e.event_id) AS last_event, e.event_type, e.actor, e.created_at
-        FROM artifact_events e
-        JOIN artifact_registry r ON r.path = e.path
-        WHERE r.workspace_root = ? AND r.path NOT LIKE ? || '/%' AND e.actor = ?
-        GROUP BY e.path
-        ORDER BY last_event DESC
-        LIMIT ?
-      `).all(root, trash, actor, limit);
-    }
     return this.db.prepare(`
       SELECT e.path, MAX(e.event_id) AS last_event, e.event_type, e.actor, e.created_at
       FROM artifact_events e
       JOIN artifact_registry r ON r.path = e.path
-      WHERE r.workspace_root = ? AND r.path NOT LIKE ? || '/%'
+      WHERE r.workspace_root = ? AND r.path NOT LIKE ? || '/%' AND (? IS NULL OR e.actor = ?)
       GROUP BY e.path
       ORDER BY last_event DESC
       LIMIT ?
-    `).all(root, trash, limit);
+    `).all(root, trash, actor, actor, limit);
   }
 
   // Artifacts waiting on the owner: candidate (review) or validated (Promote).
@@ -1103,18 +1092,14 @@ export class ControlStore {
     return Number(row.n);
   }
 
-  listVerdicts(rootPath = null) {
-    const sql = `
+  listVerdicts() {
+    const rows = this.db.prepare(`
       SELECT r.path, r.state, r.checksum, r.workspace_root, r.updated_at, w.label AS workspace_label
       FROM artifact_registry r
       JOIN workspace_roots w ON w.root_path = r.workspace_root
       WHERE r.state IN ('candidate','validated')
-      ${rootPath ? 'AND r.workspace_root=?' : ''}
       ORDER BY w.label, r.workspace_root, CASE r.state WHEN 'candidate' THEN 0 ELSE 1 END, r.path
-    `;
-    const rows = rootPath
-      ? this.db.prepare(sql).all(path.resolve(rootPath))
-      : this.db.prepare(sql).all();
+    `).all();
     return rows.map(row => ({
       ...row,
       relativePath: path.relative(row.workspace_root, row.path)
@@ -1136,8 +1121,18 @@ export class ControlStore {
     const registered = new Set(
       this.db.prepare('SELECT path FROM artifact_registry WHERE workspace_root=?').all(root).map(r => r.path)
     );
-    return this.listDirectory(rootPath, trimmed)
-      .filter(entry => entry.type === 'file' && !registered.has(entry.path));
+    const entries = this.listDirectory(rootPath, trimmed);
+    const listed = [];
+    for (const entry of entries) {
+      if (entry.type === 'file' && !registered.has(entry.path)) listed.push(entry);
+    }
+    for (const entry of entries) {
+      if (entry.type !== 'directory') continue;
+      for (const nested of this.listDirectory(rootPath, entry.relativePath)) {
+        if (nested.type === 'file' && !registered.has(nested.path)) listed.push(nested);
+      }
+    }
+    return listed;
   }
 
   // ---------------------------------------------------------------- amendments
