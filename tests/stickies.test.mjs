@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { plugin } from '../plugins/server/stickies.mjs';
-import { STICKY_COLORS } from '../public/contrib/lib/sticky.js';
+import { STICKY_COLORS, paletteEl } from '../public/contrib/lib/sticky.js';
 import { stickyKey } from '../public/contrib/lib/sticky.js';
 
 function workspace(t) {
@@ -19,6 +19,27 @@ function workspace(t) {
 function act(root, action, payload = {}, surface = 'owner') {
   return plugin.action({ action, payload: { rootPath: root, ...payload }, surface });
 }
+
+test('the palette is red yellow green first, then cyan purple orange, pink kept', () => {
+  assert.deepEqual(STICKY_COLORS, ['#ff7675', '#f6e58d', '#badc58', '#7ed6df', '#e6a8f7', '#ffbe76', '#ffb8b8']);
+  const prev = globalThis.document;
+  globalThis.document = {
+    createElement() {
+      const kids = [];
+      return {
+        style: { cssText: '' },
+        children: kids,
+        appendChild(el) { kids.push(el); return el; }
+      };
+    }
+  };
+  try {
+    const row = paletteEl(null, () => {});
+    assert.deepEqual(row.children.map(d => d.title), ['red', 'yellow', 'green', 'cyan', 'purple', 'orange', 'pink']);
+  } finally {
+    globalThis.document = prev;
+  }
+});
 
 test('notes land in <root>/.research-ops/stickies.sqlite3 and round-trip', async t => {
   const root = workspace(t);

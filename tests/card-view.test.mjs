@@ -107,7 +107,7 @@ test('folder source: one card per entry with labels and sticky, folders reveal, 
   ctx.selection = { path: '/elsewhere/x.md' };
   assert.equal(source.selected(), null);
   await source.text(file, 'read me', undefined);
-  assert.deepEqual(ctx.calls.at(-1), ['stickies', 'set', { rootPath: '/ws', path: 'README.md', text: 'read me', color: '#f6e58d' }]);
+  assert.deepEqual(ctx.calls.at(-1), ['stickies', 'set', { rootPath: '/ws', path: 'README.md', text: 'read me', color: '#ff7675' }]);
 });
 
 test('blocks source: content-addressed block cards, decisions as badges, the open filter', async () => {
