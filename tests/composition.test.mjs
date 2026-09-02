@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { ControlStore } from '../src/store.mjs';
-import { catalogRows, defaultWiring, retired, stations, contributions, wiringRemovals } from '../plugins/registry.mjs';
+import { catalogRows, defaultWiring, retired, stations, contributions, wiringRemovals, wiringAdditions } from '../plugins/registry.mjs';
 
 function freshStore(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-ops-comp-'));
@@ -69,7 +69,7 @@ test('owner wiring edits survive a reseed', t => {
   const { store } = freshStore(t);
   store.syncCatalog(catalogRows([]));
   store.seedStationWiring(defaultWiring);
-  for (const id of ['launchpad', 'board-view', 'inbox', 'statistics-view']) {
+  for (const id of ['launchpad', 'board-view', 'inbox']) {
     store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: id, remove: true });
   }
   store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'candidate-list', sortOrder: 10 });
@@ -206,12 +206,12 @@ test('file-workbench is retired: no station row, no wiring, category on every su
   assert.ok(!defaultWiring['dashboard-viewer'].main.includes('launchpad'));
 });
 
-test('seeded dashboard is board, inbox, statistics; launchpad stays a wireable catalog contribution', t => {
+test('seeded dashboard is board + inbox; launchpad stays a wireable catalog contribution', t => {
   const { store } = freshStore(t);
   store.syncCatalog(catalogRows([]));
   store.seedStationWiring(defaultWiring);
   const wired = store.stationContributions('dashboard-viewer').map(r => r.contribution_id);
-  assert.deepEqual(wired, ['board-view', 'inbox', 'statistics-view']);
+  assert.deepEqual(wired, ['board-view', 'inbox']);
   const catalog = store.listCatalog();
   const launchpad = catalog.find(r => r.plugin_id === 'launchpad');
   assert.ok(launchpad);
@@ -221,6 +221,27 @@ test('seeded dashboard is board, inbox, statistics; launchpad stays a wireable c
   assert.ok(stations.some(s => s.id === 'planning-board'));
   assert.deepEqual(defaultWiring['planning-board'].main, ['board-view']);
   assert.ok(!retired.includes('launchpad'));
+});
+
+test('statistics contribution is retired; transcript-review seeds search then trace lanes', t => {
+  assert.ok(retired.includes('statistics-view'));
+  assert.deepEqual(defaultWiring['transcript-review'].main, ['transcript-search-view', 'trace-lanes-view']);
+  const addition = wiringAdditions.find(r => r.id === '20260902-trace-lanes-on-transcript-review');
+  assert.ok(addition);
+  assert.equal(addition.stationId, 'transcript-review');
+  assert.equal(addition.slotName, 'main');
+  assert.equal(addition.contributionId, 'trace-lanes-view');
+  const { store } = freshStore(t);
+  store.syncCatalog(catalogRows([]));
+  store.retirePlugins(retired);
+  const catalog = store.listCatalog();
+  assert.equal(catalog.some(r => r.plugin_id === 'statistics-view'), false);
+  const lanes = catalog.find(r => r.plugin_id === 'trace-lanes-view');
+  assert.ok(lanes);
+  assert.equal(lanes.client_entry, '/contrib/trace-lanes.js');
+  store.seedStationWiring(defaultWiring);
+  const wired = store.stationContributions('transcript-review').map(r => r.contribution_id);
+  assert.deepEqual(wired, ['transcript-search-view', 'trace-lanes-view']);
 });
 
 test('catalog launchpad removal applies exactly once — an owner re-wire is never fought', t => {

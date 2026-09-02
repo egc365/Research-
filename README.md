@@ -26,7 +26,7 @@ This repository is the clean-room successor to the useful parts of Card Workshop
 - **Validation receipts.** `candidate → validated` requires deterministic server-side validator receipts (the preflight policy rules run as validators); receipts record the checksum they were minted against and are refused if the bytes differ. Callers cannot supply their own receipts through the governance plugin.
 - **Move detection.** A registered path missing from disk is rematched against unregistered files by checksum; accepting the remap re-keys the registry row and promoted snapshots in one transaction and appends a `MOVE` event. Owner surface only.
 - **Execution state (SKILL.state, arXiv 2608.26263).** Per-run bounded structured state: agents propose JSON patches (`null` deletes a key); the runtime validates, merges (`Σ_{t+1} = Σ_t ⊕ ΔΣ_t`), and versions. Malformed or stale-version patches change nothing. Reasoning traces are never stored.
-- **Statistics.** The statistics plugin reads the registry and event ledger only, never raw files.
+- **Ledger counts.** Workspace counts and recent activity come from the registry and event ledger only, never by reading raw files. The statistics contribution is retired.
 
 ## Composable UI (V1, `feature/composable-ui-v1`)
 
@@ -56,7 +56,7 @@ Three levels:
   promotion-control (validation language; Promote appears exactly once),
   candidate-list (validation queue card wall), decision-controls,
   validation-result, label-editor (dialog from the tree; labels/path_labels in
-  the crosswalk), project-create-form, statistics-view,
+  the crosswalk), project-create-form, trace-lanes-view,
   execution-state-view). Stations compose them; no
   contribution is copied into two stations, and contributions talk only
   through the kernel bus and services — never by importing each other.

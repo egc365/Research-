@@ -112,7 +112,6 @@ export const contributions = [
   { id: 'validation-result',  label: 'Validation',         entry: '/contrib/validation-result.js',  description: 'Deterministic validator results for the selected file, check by check.' },
   { id: 'project-create-form',label: 'New project form',   entry: '/contrib/project-create-form.js',description: 'Name a project; the form writes the folder + README through the governed write path.' },
   { id: 'label-editor',      label: 'Label editor',       entry: '/contrib/label-editor.js',       headless: true, description: 'Manage labels in a dialog opened from the tree (create, rename, recolor, describe, delete, assign) — stored in the SQLite crosswalk, owner-only writes. Occupies no screen space until opened.' },
-  { id: 'statistics-view',    label: 'Statistics',         entry: '/contrib/statistics-view.js',    description: 'Counts by state, event type, actor, and the last promotions.' },
   { id: 'launchpad',          label: 'Launchpad',          entry: '/contrib/launchpad.js',          description: 'Shown before a workspace is chosen: workspaces to enter and the machine’s programs. Still wireable into any station; the dashboard no longer mounts it by default.' },
   { id: 'inbox',              label: 'Inbox',              entry: '/contrib/inbox.js',              description: 'What needs the owner: candidates and validated artifacts awaiting a verdict, plus the latest activity.' },
   { id: 'folder-cards',       label: 'Folder cards',       entry: '/contrib/folder-cards.js',       description: 'Notion-style card view of a folder (the workspace root by default): one card per file or folder, with label chips.' },
@@ -123,6 +122,7 @@ export const contributions = [
   { id: 'execution-state-view', label: 'Execution state',  entry: '/contrib/execution-state-view.js', description: 'Inspect and patch a run’s structured state with optimistic version checks.' },
   { id: 'tool-health-view',   label: 'Tool health',        entry: '/contrib/tool-health.js',        description: 'Port health board: probes the machine’s tools via the tool-health service and shows up/down with latency. Extra targets via wiring config { targets: [...] }.' },
   { id: 'transcript-search-view', label: 'Transcript search', entry: '/contrib/transcript-search.js', description: 'Bot cutover → session list → filtered deep search over native transcripts, via the transcript-search service.' },
+  { id: 'trace-lanes-view',   label: 'Trace lanes',        entry: '/contrib/trace-lanes.js',        description: 'Tempo span lanes from :8885, iframe by default; URL overridable via wiring config { url }. Up/down via the tool-health service.' },
   { id: 'board-view',         label: 'Board',              entry: '/contrib/board-view.js',         description: 'Planning board over the workspace: group tiles laid out per orientation, breadcrumb drill-in, drag cards to reorder or move; file cards select the file, links open, notes edit inline.' },
   { id: 'gpu-governor-view',  label: 'GPU governor',       entry: '/contrib/gpu-governor-view.js',  description: 'Governor board: current snapshot, allowlist rules + which path is live, recent enforcement events newest first, link to the :7890 dashboard. Event tail size via wiring config { eventLimit: N }.' },
   { id: 'parakeet-view',      label: 'Parakeet STT',       entry: '/contrib/parakeet-view.js',      description: 'Parakeet status card: up/down chip, config summary, raw status JSON, owner-only start/stop listening buttons, 15s auto-refresh.' }
@@ -148,14 +148,14 @@ export const defaultWiring = {
       'promotion-control'
     ]
   },
-  'dashboard-viewer': { main: ['board-view', 'inbox', 'statistics-view'] },
+  'dashboard-viewer': { main: ['board-view', 'inbox'] },
   'provenance-viewer': {
     main: ['revision-timeline'],
     side: ['actor-filter', 'provenance-block']
   },
   'execution-state': { main: ['execution-state-view'] },
   'health-monitor': { main: ['tool-health-view'] },
-  'transcript-review': { main: ['transcript-search-view'] },
+  'transcript-review': { main: ['transcript-search-view', 'trace-lanes-view'] },
   'gpu-monitor': { main: ['gpu-governor-view'] },
   'stt-monitor': { main: ['parakeet-view'] },
   'planning-board': { main: ['board-view'] },
@@ -165,14 +165,15 @@ export const defaultWiring = {
 // Ids the catalog used to ship and no longer does. Boot deletes their rows from
 // all three composition tables (ui_plugins, workspace_plugins,
 // station_contributions) so the plugin manager shows no ghosts.
-export const retired = ['label-designator', 'governance-center', 'file-workbench'];
+export const retired = ['label-designator', 'governance-center', 'file-workbench', 'statistics-view'];
 
 // One-shot wiring additions for stations that already have owner rows (the
 // seeder deliberately skips those). Each id is applied at most once ever —
 // recorded in app_meta — so an owner who later unwires the contribution is
 // never fought with.
 export const wiringAdditions = [
-  { id: '20260902-board-on-dashboard', stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'board-view', sortOrder: 15 }
+  { id: '20260902-board-on-dashboard', stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'board-view', sortOrder: 15 },
+  { id: '20260902-trace-lanes-on-transcript-review', stationId: 'transcript-review', slotName: 'main', contributionId: 'trace-lanes-view', sortOrder: 20 }
 ];
 
 // One-shot wiring removals for stations that already have owner rows (the
