@@ -7,7 +7,7 @@ export function mount(el, ctx) {
     const card = await ctx.action('governance', 'card', { path: f.path });
     const rules = await ctx.action('preflight', 'list', {});
     el.innerHTML = `
-      <div class="card"><h3>Validation receipts</h3>
+      <div class="card">
         ${card.validation
           ? `<div class="keyval"><div class="key">Result</div><div>${card.validation.ok ? '✓ passed' : '✗ failed'}</div></div>
              <div class="keyval"><div class="key">At bytes</div><div class="mono">${ctx.esc(card.validation.checksum || '—')}</div></div>

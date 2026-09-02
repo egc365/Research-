@@ -581,13 +581,13 @@ async function renderEmptyFrame() {
   frame.append(host, add);
   stage.append(frame);
   try {
-    const module = await loadModule({ contribution_id: 'launchpad', client_entry: '/contrib/launchpad.js' });
+    const module = await loadModule(catalogClient('launchpad'));
     const { ctx, dispose } = makeContext(null, {});
     const unmount = await module.mount(host, ctx);
     kernel.disposers.push(() => { if (typeof unmount === 'function') unmount(); dispose(); });
   } catch (error) {
     console.error('mount launchpad', error);
-    host.innerHTML = `<div class="card"><h3>Launchpad</h3><div class="muted">Failed to mount: ${esc(error.message)}</div></div>`;
+    host.innerHTML = `<div class="card"><div class="muted">Failed to mount: ${esc(error.message)}</div></div>`;
   }
 }
 
@@ -1453,7 +1453,7 @@ function renderCustomize(tab = 'appearance') {
   if (tab === 'dashboard') {
     const links = mergedPrefs().links || [];
     pane.innerHTML = `
-      <div class="muted" style="margin-bottom:8px">The dashboard's content blocks (board, inbox, statistics) are wired in Plugins. Extra program links for THIS workspace live here; the tool-health service reads them.</div>
+      <div class="muted" style="margin-bottom:8px">The dashboard's content blocks are wired in Plugins. Extra program links for THIS workspace feed the tool-health probe.</div>
       <div data-role="links"></div>
       <div class="pm-add"><input data-role="new-label" placeholder="label (e.g. Extraction app)">
         <input data-role="new-url" class="mono" placeholder="http://127.0.0.1:7860">

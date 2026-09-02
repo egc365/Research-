@@ -13,6 +13,17 @@ function freshStore(t) {
   return { store, dir };
 }
 
+test('contribution sources do not paint the catalog label as an h3', () => {
+  const root = path.join(import.meta.dirname, '..');
+  for (const c of contributions) {
+    const file = path.join(root, 'public', c.entry.replace(/^\//, ''));
+    const src = fs.readFileSync(file, 'utf8');
+    const escaped = c.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`<h3[^>]*>\\s*${escaped}`);
+    assert.equal(re.test(src), false, `${c.id} still paints <h3>${c.label}`);
+  }
+});
+
 test('catalog sync upserts stations, contributions and services', t => {
   const { store } = freshStore(t);
   const services = [{ id: 'diff', label: 'Diff', description: 'x' }];
@@ -38,7 +49,7 @@ test('owner disable survives a catalog re-sync (restart)', t => {
   assert.equal(row.enabled, 0);
 });
 
-test('a fresh workspace has zero enabled plugins — the empty frame', t => {
+test('a fresh workspace has zero enabled plugins, the empty frame', t => {
   const { store, dir } = freshStore(t);
   store.syncCatalog(catalogRows([]));
   store.seedStationWiring(defaultWiring);
@@ -154,7 +165,7 @@ test('owner-defined stations render like shipped ones and survive catalog sync',
   assert.deepEqual(composition.stations['reading-room'].map(r => r.contribution_id), ['dual-document-view']);
 });
 
-test('wiring additions apply exactly once — an owner unwire is never fought', t => {
+test('wiring additions apply exactly once, an owner unwire is never fought', t => {
   const { store } = freshStore(t);
   store.syncCatalog(catalogRows([]));
   // The dashboard already has owner wiring rows, so the seeder skips it.
@@ -165,13 +176,13 @@ test('wiring additions apply exactly once — an owner unwire is never fought', 
     "SELECT contribution_id FROM station_contributions WHERE station_id='dashboard-viewer' ORDER BY sort_order"
   ).all().map(r => r.contribution_id);
   assert.deepEqual(wired(), ['launchpad', 'board-view']);
-  // Owner removes it; a restart re-applies additions — the row must stay gone.
+  // Owner removes it; a restart re-applies additions, the row must stay gone.
   store.db.prepare("DELETE FROM station_contributions WHERE contribution_id='board-view'").run();
   store.applyWiringAdditions(additions);
   assert.deepEqual(wired(), ['launchpad']);
 });
 
-test('wiring removals apply exactly once — an owner re-wire is never fought', t => {
+test('wiring removals apply exactly once, an owner re-wire is never fought', t => {
   const { store } = freshStore(t);
   store.syncCatalog(catalogRows([]));
   // Existing owner DB: dashboard already has launchpad + folder-cards.
@@ -258,7 +269,7 @@ test('statistics contribution is retired; transcript-review seeds search then tr
   assert.deepEqual(wired, ['transcript-search-view', 'trace-lanes-view']);
 });
 
-test('catalog launchpad removal applies exactly once — an owner re-wire is never fought', t => {
+test('catalog launchpad removal applies exactly once, an owner re-wire is never fought', t => {
   const { store } = freshStore(t);
   store.syncCatalog(catalogRows([]));
   store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'launchpad', sortOrder: 10 });
@@ -277,6 +288,28 @@ test('catalog launchpad removal applies exactly once — an owner re-wire is nev
   store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'launchpad', sortOrder: 10 });
   store.applyWiringRemovals(wiringRemovals);
   assert.ok(wired().includes('launchpad'));
+});
+
+test('catalog inbox removal applies exactly once, an owner re-wire is never fought', t => {
+  const { store } = freshStore(t);
+  store.syncCatalog(catalogRows([]));
+  store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'inbox', sortOrder: 10 });
+  store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'board-view', sortOrder: 20 });
+  const inboxRemoval = wiringRemovals.find(r =>
+    r.stationId === 'dashboard-viewer' && r.slotName === 'main' && r.contributionId === 'inbox');
+  assert.ok(inboxRemoval, 'catalog exports a 20260902-inbox-off-dashboard wiringRemovals row');
+  assert.equal(inboxRemoval.id, '20260902-inbox-off-dashboard');
+  store.applyWiringRemovals(wiringRemovals);
+  const wired = () => store.db.prepare(
+    "SELECT contribution_id FROM station_contributions WHERE station_id='dashboard-viewer' ORDER BY sort_order"
+  ).all().map(r => r.contribution_id);
+  assert.ok(!wired().includes('inbox'));
+  assert.ok(wired().includes('board-view'));
+  const meta = store.db.prepare("SELECT value FROM app_meta WHERE key=?").get(`wiring-removal:${inboxRemoval.id}`);
+  assert.ok(meta);
+  store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'inbox', sortOrder: 10 });
+  store.applyWiringRemovals(wiringRemovals);
+  assert.ok(wired().includes('inbox'));
 });
 
 test('planning-board-only workspaces get dashboard-viewer enabled once', t => {

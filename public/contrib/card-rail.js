@@ -55,7 +55,7 @@ export function mount(el, ctx) {
       ? ['all', 'owner', 'agent', 'wrote', 'open'] : ['all', 'open'];
     const chipLabel = { all: 'All', owner: 'Owner', agent: 'Agent', wrote: 'Wrote this file', open: 'Open' };
     el.innerHTML = `
-      <div class="card"><h3>Cards — ${shown.length} of ${cards.length}</h3>
+      <div class="card"><div class="muted">${shown.length} of ${cards.length}</div>
         <div class="chip-row">${chips.map(c =>
           `<button data-chip="${c}" class="${filter === c ? 'active' : ''}">${chipLabel[c]}</button>`).join('')}</div>
         ${note ? `<div class="muted" style="margin:6px 0">${ctx.esc(note)}</div>` : ''}

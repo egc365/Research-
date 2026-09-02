@@ -104,9 +104,10 @@ export function mount(el, ctx) {
 
   function faceTitle(card) {
     if (card.kind === 'image') return card.title || 'image';
+    if (card.kind === 'folder' && card.title) return card.title;
     if (card.kind === 'file' || card.kind === 'folder') {
       const ref = String(card.ref || '');
-      return ref.split('/').filter(Boolean).pop() || card.title || ref;
+      return ref.split('/').filter(Boolean).pop() || ref;
     }
     if (card.kind === 'link') {
       try { return new URL(card.ref).host || card.ref; } catch { return card.ref; }
@@ -125,7 +126,8 @@ export function mount(el, ctx) {
 
   function stickyText(card) {
     if (card.kind === 'image') return card.title || '';
-    if (card.kind === 'file' || card.kind === 'folder') {
+    if (card.kind === 'folder') return faceTitle(card);
+    if (card.kind === 'file') {
       const key = stickyKey(root(), card.ref);
       return stickies.notes?.[key]?.text || '';
     }
@@ -305,8 +307,8 @@ export function mount(el, ctx) {
   const btn = (glyph, title, onclick) => {
     const b = document.createElement('button');
     b.type = 'button';
+    b.className = 'board-head-btn';
     b.textContent = glyph; b.title = title; b.onclick = onclick;
-    b.style.cssText = 'background:none;border:1px solid #444;border-radius:4px;color:inherit;cursor:pointer;padding:0 6px;margin-left:4px;font-size:12px';
     return b;
   };
 
@@ -348,7 +350,14 @@ export function mount(el, ctx) {
     const next = { ...card, color: colorPick !== undefined ? colorPick : card.color };
     const patch = { cardId: card.card_id };
     if (colorPick !== undefined) patch.color = colorPick;
-    if (card.kind === 'file' || card.kind === 'folder') {
+    if (card.kind === 'folder') {
+      const v = String(text || '').trim();
+      if (v && v !== faceTitle(card)) patch.name = v;
+      if (patch.color === undefined && patch.name === undefined) { paint(); return; }
+      call('update-card', patch).then(repaint).catch(error => { ctx.notify(error.message, 'error'); repaint(); });
+      return;
+    }
+    if (card.kind === 'file') {
       const writes = [];
       if (colorPick !== undefined) writes.push(call('update-card', patch));
       const key = stickyKey(root(), card.ref);

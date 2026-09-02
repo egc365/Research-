@@ -86,7 +86,7 @@ export class ControlStore {
   }
 
   // Registered workspace roots sitting at or under a path. A governed move or
-  // trash of that path must carry these registrations along — leaving them
+  // trash of that path must carry these registrations along, leaving them
   // behind is what turns a deleted folder into a ghost workspace.
   registeredRootsUnder(targetPath) {
     const target = path.resolve(targetPath);
@@ -458,7 +458,7 @@ export class ControlStore {
   // SQLite is the composition crosswalk: which plugins exist (ui_plugins),
   // which stations a workspace enables (workspace_plugins), and which
   // contributions fill each station slot (station_contributions). Routing and
-  // configuration only — application content never lives in these tables.
+  // configuration only. Application content never lives in these tables.
 
   syncCatalog(rows) {
     const upsert = this.db.prepare(`
@@ -502,7 +502,7 @@ export class ControlStore {
   }
 
   // Wiring additions for stations whose rows already exist (the seeder skips
-  // those). Each addition id runs at most once ever — recorded in app_meta —
+  // those). Each addition id runs at most once ever, recorded in app_meta,
   // so an owner who later unwires the contribution is never fought with.
   applyWiringAdditions(additions = []) {
     const seen = this.db.prepare('SELECT value FROM app_meta WHERE key=?');
@@ -521,7 +521,7 @@ export class ControlStore {
   }
 
   // Wiring removals for stations whose rows already exist (the seeder skips
-  // those). Each removal id runs at most once ever — recorded in app_meta —
+  // those). Each removal id runs at most once ever, recorded in app_meta,
   // so an owner who later re-adds the contribution is never fought with.
   applyWiringRemovals(removals = []) {
     const seen = this.db.prepare('SELECT value FROM app_meta WHERE key=?');
@@ -536,7 +536,7 @@ export class ControlStore {
   }
 
   // Enable toPluginId on workspaces that currently have fromPluginId and
-  // do not already have toPluginId. Each spec.id runs at most once ever —
+  // do not already have toPluginId. Each spec.id runs at most once ever,
   // recorded in app_meta.
   applyStationEnables(enables = []) {
     const seen = this.db.prepare('SELECT value FROM app_meta WHERE key=?');
@@ -564,7 +564,7 @@ export class ControlStore {
   }
 
   // An owner-defined station: a ui_plugins row like any shipped station, so
-  // the kernel renders it and the plugin manager wires it — domain-specific
+  // the kernel renders it and the plugin manager wires it. Domain-specific
   // behavior arrives by choosing contributions, not by writing a component.
   // Catalog sync never touches it (sync only upserts declared ids).
   defineStation({ id, label, description = '', layout = 'rail-main-side', icon = '★' }) {
@@ -773,7 +773,7 @@ export class ControlStore {
   // everything under it) moves to <workspace>/.research-ops/trash/<stamp>-<name>,
   // which the tree never lists. Registry rows follow the bytes and flip to
   // 'archived'; labels and amendments follow too; a DELETE event names where
-  // it came from. Nothing is unlinked — the owner can pull it back from the
+  // it came from. Nothing is unlinked. The owner can pull it back from the
   // trash folder by hand, and a rm of the trash dir is an explicit shell act.
   deleteEntry({ rootPath, filePath, actor = 'human' }) {
     const root = path.resolve(rootPath);
@@ -783,7 +783,7 @@ export class ControlStore {
     if (target.includes(`${path.sep}.research-ops${path.sep}`)) throw new Error('Already in the trash');
     const isDir = fs.statSync(target).isDirectory();
     // Folders being trashed may themselves be registered workspace roots (or
-    // contain some). Their registrations go with them — a workspace_roots row
+    // contain some). Their registrations go with them. A workspace_roots row
     // pointing at trashed bytes is the ghost that haunted the switcher.
     const unregistered = isDir ? this.registeredRootsUnder(target).filter(r => r !== root) : [];
     const trashDir = path.join(root, '.research-ops', 'trash');
@@ -883,7 +883,7 @@ export class ControlStore {
 
   // ------------------------------------------------- appearance + navigation
   // Validated JSON preferences. Workspace scope wins over user scope wins over
-  // defaults; the kernel resolves that — here we only store clean values.
+  // defaults; the kernel resolves that. Here we only store clean values.
 
   static #prefValidators = {
     theme: v => ['light', 'dark', 'system'].includes(v),

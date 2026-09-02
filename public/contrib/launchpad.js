@@ -46,7 +46,7 @@ export function mount(el, ctx) {
       ctx.request('/api/workspaces').catch(() => [])
     ]);
 
-    el.innerHTML = '<div class="card"><h3>Launchpad</h3></div>';
+    el.innerHTML = '<div class="card"></div>';
     const host = el.querySelector('.card');
 
     if (ctx.workspace) {
@@ -65,14 +65,25 @@ export function mount(el, ctx) {
     }
 
     const wsGroup = group('Workspaces', !ctx.workspace);
-    for (const ws of (Array.isArray(workspaces) ? workspaces : [])) {
-      const isCurrent = ws.root_path === ctx.workspace?.root_path;
-      const name = ws.label || ws.root_path.split('/').filter(Boolean).pop() || ws.root_path;
-      const missing = ws.exists === false;
-      const title = missing ? `${ws.root_path} (missing on disk)` : ws.root_path;
-      const node = chip(missing ? '⚠' : '🗂', name, title);
-      if (!isCurrent) node.onclick = () => ctx.bus.emit('switch-workspace', { root: ws.root_path });
-      wsGroup.row.append(node);
+    const list = Array.isArray(workspaces) ? workspaces : [];
+    if (!list.length) {
+      const empty = document.createElement('div');
+      empty.className = 'muted';
+      empty.textContent = 'No workspaces yet';
+      wsGroup.row.append(empty);
+    } else {
+      for (const ws of list) {
+        const isCurrent = ws.root_path === ctx.workspace?.root_path;
+        const name = ws.label || ws.root_path.split('/').filter(Boolean).pop() || ws.root_path;
+        const missing = ws.exists === false;
+        const title = missing
+          ? `${ws.root_path} (missing on disk)`
+          : isCurrent ? `${ws.root_path} (current)` : ws.root_path;
+        const node = chip(missing ? '⚠' : '🗂', name, title);
+        if (isCurrent) node.classList.add('current');
+        if (!isCurrent) node.onclick = () => ctx.bus.emit('switch-workspace', { root: ws.root_path });
+        wsGroup.row.append(node);
+      }
     }
     host.append(wsGroup.details);
   }

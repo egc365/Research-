@@ -26,7 +26,7 @@ export const plugin = {
         await response.body?.cancel();
         return { label, url: url.href, ok: true, status: response.status, ms: Math.round(performance.now() - started) };
       } catch (error) {
-        return { label, url: url.href, ok: false, error: error.cause?.code || error.name, ms: Math.round(performance.now() - started) };
+        return { label, url: url.href, ok: false, error: error.code || error.cause?.code || error.name, ms: Math.round(performance.now() - started) };
       }
     }));
     return { checkedAt: new Date().toISOString(), results };
