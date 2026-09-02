@@ -22,6 +22,13 @@ test('catalog sync upserts stations, contributions and services', t => {
   assert.equal(catalog.filter(r => r.plugin_kind === 'service').length, 1);
 });
 
+test('every catalog contribution carries manifest.description', t => {
+  const { store } = freshStore(t);
+  const catalog = store.syncCatalog(catalogRows([]));
+  const missing = catalog.filter(r => r.plugin_kind === 'contribution' && !String(r.manifest?.description || '').trim());
+  assert.deepEqual(missing.map(r => r.plugin_id), []);
+});
+
 test('owner disable survives a catalog re-sync (restart)', t => {
   const { store } = freshStore(t);
   store.syncCatalog(catalogRows([]));

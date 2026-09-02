@@ -321,6 +321,25 @@ async function loadModule(row) {
   return kernel.modules.get(row.contribution_id);
 }
 
+// Slim chrome on every mounted box. Fields come from the wiring row:
+// stationId from activateStation, slotName/contributionId/label from
+// kernel.composition.stations[stationId] (station_contributions JOIN ui_plugins).
+// Contributions write host.innerHTML, so the header lives on the section
+// and the contribution mounts in a child.
+function contributionHeader({ stationId, slotName, contributionId, label }) {
+  const header = document.createElement('div');
+  header.className = 'contrib-header';
+  header.dataset.station = stationId;
+  header.dataset.slot = slotName;
+  header.dataset.contribution = contributionId;
+  header.innerHTML = `<span>${esc(label)}</span><button type="button" title="Open plugin manager" aria-label="Open plugin manager">⚙</button>`;
+  header.querySelector('button').addEventListener('click', event => {
+    event.stopPropagation();
+    openPluginManager(stationId);
+  });
+  return header;
+}
+
 // Drag divider between the main and side slots. Until a paneSplit preference
 // exists the layout keeps its fixed side width; the first drag (or a stored
 // pref) switches the grid to the --pane-split variable. Saved once on drag
@@ -393,7 +412,13 @@ async function activateStation(stationId) {
     if (!slotEl) continue;
     const section = document.createElement('section');
     slotEl.append(section);
-    let host = section;
+    section.append(contributionHeader({
+      stationId,
+      slotName: row.slot_name,
+      contributionId: row.contribution_id,
+      label: row.label
+    }));
+    let host = document.createElement('div');
     if (row.slot_name === 'side') {
       const remembered = uiMemory.read().sideCollapsed?.[stationId]?.[row.contribution_id];
       const collapsed = remembered ?? lifecycleLast.has(row.contribution_id);
@@ -411,6 +436,8 @@ async function activateStation(stationId) {
       body.className = 'section-body';
       section.append(head, body);
       host = body;
+    } else {
+      section.append(host);
     }
     try {
       const module = await loadModule(row);
@@ -613,12 +640,20 @@ async function wireContribution(stationId, slotName, contributionId, remove = fa
   renderPluginManager();
 }
 
+function firstSentence(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return '';
+  const match = raw.match(/^.+?(?:[.!?]\s+|[.!?]$)/);
+  return match ? match[0].trim() : raw;
+}
+
 function renderPluginManager() {
   if (!kernel.workspace) {
     pluginManagerBody.innerHTML = '<div class="empty">Add a workspace first.</div>';
     return;
   }
   const enabledIds = new Set(kernel.composition.enabled.map(row => row.plugin_id));
+  const catalogById = new Map(kernel.composition.catalog.map(row => [row.plugin_id, row]));
   const stations = kernel.composition.catalog.filter(row => row.plugin_kind === 'station' && row.enabled);
   const contributions = kernel.composition.catalog.filter(row => row.plugin_kind === 'contribution' && row.enabled);
   pluginManagerBody.replaceChildren();
@@ -664,6 +699,7 @@ function renderPluginManager() {
   for (const station of stations) {
     const box = document.createElement('div');
     box.className = 'pm-station';
+    box.dataset.stationId = station.plugin_id;
     const isOn = enabledIds.has(station.plugin_id);
     box.innerHTML = `
       <label>
@@ -684,9 +720,10 @@ function renderPluginManager() {
         label.textContent = slotName;
         wiring.append(label);
         for (const row of wired.filter(r => r.slot_name === slotName)) {
+          const desc = catalogById.get(row.contribution_id)?.manifest?.description || '';
           const line = document.createElement('div');
           line.className = 'pm-wire-row';
-          line.innerHTML = `<span>${esc(row.label)}</span>
+          line.innerHTML = `<div><span>${esc(row.label)}</span>${desc ? `<div class="desc">${esc(desc)}</div>` : ''}</div>
             <button class="danger" title="Remove from this slot">✕</button>`;
           line.querySelector('button').onclick = () =>
             wireContribution(station.plugin_id, slotName, row.contribution_id, true).catch(showError);
@@ -697,7 +734,11 @@ function renderPluginManager() {
       add.className = 'pm-add';
       add.innerHTML = `
         <select data-role="slot">${(station.manifest.slots || []).map(s => `<option>${esc(s)}</option>`).join('')}</select>
-        <select data-role="contribution">${contributions.map(c => `<option value="${esc(c.plugin_id)}">${esc(c.label)}</option>`).join('')}</select>
+        <select data-role="contribution">${contributions.map(c => {
+          const lead = firstSentence(c.manifest?.description);
+          const text = lead ? `${c.label} ${lead}` : c.label;
+          return `<option value="${esc(c.plugin_id)}">${esc(text)}</option>`;
+        }).join('')}</select>
         <button>Add</button>`;
       add.querySelector('button').onclick = () => wireContribution(
         station.plugin_id,
@@ -711,9 +752,14 @@ function renderPluginManager() {
   }
 }
 
-function openPluginManager() {
+function openPluginManager(stationId) {
   renderPluginManager();
   pluginManager.showModal();
+  if (typeof stationId !== 'string' || !stationId) return;
+  const box = pluginManagerBody.querySelector(`.pm-station[data-station-id="${CSS.escape(stationId)}"]`);
+  if (!box) return;
+  box.dataset.focus = '1';
+  box.scrollIntoView({ block: 'center' });
 }
 
 // ---------------------------------------------------------- customize dialog
