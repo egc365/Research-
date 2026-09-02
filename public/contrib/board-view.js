@@ -37,8 +37,6 @@ export function mount(el, ctx) {
   let renamingGroupId = null;
   let pendingRemove = null;
   let removeTimer = 0;
-  let drillTimer = 0;
-  let palPointer = false;
   let dragCardId = null;
   let dragGroupId = null;
 
@@ -181,7 +179,8 @@ export function mount(el, ctx) {
 
   function removeBtn(kind, id, idleTitle) {
     const armed = pendingRemove && pendingRemove.kind === kind && pendingRemove.id === id;
-    const b = btn(armed ? 'delete?' : '✕', armed ? 'Confirm remove' : idleTitle, () => {
+    const b = btn(armed ? 'delete?' : '✕', armed ? 'Confirm remove' : idleTitle, e => {
+      e.stopPropagation();
       if (pendingRemove && pendingRemove.kind === kind && pendingRemove.id === id) {
         clearTimeout(removeTimer);
         pendingRemove = null;
@@ -234,9 +233,11 @@ export function mount(el, ctx) {
     editColor = undefined;
     editingCardId = null;
     const next = { ...card, color: colorPick !== undefined ? colorPick : card.color };
-    const writes = [];
-    if (colorPick !== undefined) writes.push(call('set-color', { cardId: card.card_id, color: colorPick }));
+    const patch = { cardId: card.card_id };
+    if (colorPick !== undefined) patch.color = colorPick;
     if (card.kind === 'file') {
+      const writes = [];
+      if (colorPick !== undefined) writes.push(call('update-card', patch));
       const key = stickyKey(root(), card.ref);
       if (key && !key.startsWith('/')) {
         writes.push(ctx.action('stickies', 'set', { rootPath: root(), path: key, text, color: resolveColor(next) }));
@@ -246,15 +247,19 @@ export function mount(el, ctx) {
       return;
     }
     const v = text.trim();
-    if (v) writes.push(call('rename', { cardId: card.card_id, title: v }));
-    if (!writes.length) { paint(); return; }
-    Promise.all(writes).then(repaint).catch(error => { ctx.notify(error.message, 'error'); repaint(); });
+    if (v) {
+      if (card.kind === 'note') patch.text = v;
+      else patch.name = v;
+    }
+    if (patch.color === undefined && patch.text === undefined && patch.name === undefined) { paint(); return; }
+    call('update-card', patch).then(repaint).catch(error => { ctx.notify(error.message, 'error'); repaint(); });
   }
 
   function cardEl(card, group) {
     const c = document.createElement('div');
-    c.className = 'board-card';
+    c.className = 'board-card card';
     c.dataset.kind = card.kind;
+    c.dataset.ref = card.kind === 'file' ? (stickyKey(root(), card.ref) || card.ref) : card.ref;
     const editing = editingCardId === card.card_id;
     const shownColor = editing && editColor !== undefined ? editColor : card.color;
     styleSticky(c, resolveColor({ ...card, color: shownColor }));
@@ -294,8 +299,21 @@ export function mount(el, ctx) {
         e.stopPropagation();
         ctx.selectFile(card.ref).catch(error => ctx.notify(error.message, 'error'));
       };
-      glyph.onclick = select;
-      title.onclick = select;
+      const open = e => {
+        e.preventDefault();
+        e.stopPropagation();
+        ctx.selectFile(card.ref)
+          .then(() => ctx.activateStation('revision-center'))
+          .catch(error => ctx.notify(error.message, 'error'));
+      };
+      c.addEventListener('click', e => {
+        if (e.target.closest('.board-card-body, .board-card-palette')) return;
+        select(e);
+      });
+      c.addEventListener('dblclick', e => {
+        if (e.target.closest('.board-card-body, .board-card-palette')) return;
+        open(e);
+      });
     }
 
     c.append(glyph, title);
@@ -325,11 +343,6 @@ export function mount(el, ctx) {
       };
       area.onblur = () => {
         if (cancelled || !area.isConnected) return;
-        if (palPointer) {
-          palPointer = false;
-          queueMicrotask(() => { if (area.isConnected) area.focus(); });
-          return;
-        }
         saveCardBody(card, area.value);
       };
       body.appendChild(area);
@@ -342,7 +355,6 @@ export function mount(el, ctx) {
     const palWrap = document.createElement('div');
     palWrap.className = 'board-card-palette';
     isolateStickyPointer(palWrap);
-    palWrap.addEventListener('pointerdown', e => { e.preventDefault(); palPointer = true; });
     const mountPalette = () => {
       const current = editing && editColor !== undefined ? editColor : card.color;
       palWrap.replaceChildren(paletteEl(current, color => {
@@ -472,7 +484,8 @@ export function mount(el, ctx) {
   }
 
   function headerEl(group) {
-    const h = div('display:flex;align-items:center;gap:4px;padding:4px 6px;border-bottom:1px solid #333');
+    const h = document.createElement('header');
+    h.style.cssText = 'display:flex;align-items:center;gap:4px;padding:4px 6px;border-bottom:1px solid #333';
     if (renamingGroupId === group.group_id) {
       const input = document.createElement('input');
       input.className = 'board-group-title-edit';
@@ -494,27 +507,20 @@ export function mount(el, ctx) {
     } else {
       const title = div('font-weight:600;cursor:pointer;flex:1', group.title);
       title.title = 'Open';
-      // Delay the drill so a double-click can rename without the first click painting the title away.
-      title.onclick = e => {
-        if (e.detail !== 1) return;
-        clearTimeout(drillTimer);
-        drillTimer = setTimeout(() => {
-          const found = findPath(data.groups, group.group_id);
-          crumb = found ? found.trail : [];
-          emitPath();
-          paint();
-        }, 250);
-      };
-      title.ondblclick = e => {
-        e.preventDefault();
-        e.stopPropagation();
-        clearTimeout(drillTimer);
-        stopEditing();
-        renamingGroupId = group.group_id;
+      title.onclick = () => {
+        const found = findPath(data.groups, group.group_id);
+        crumb = found ? found.trail : [];
+        emitPath();
         paint();
       };
       h.appendChild(title);
     }
+    h.appendChild(btn('✎', 'Rename group', e => {
+      e.stopPropagation();
+      stopEditing();
+      renamingGroupId = group.group_id;
+      paint();
+    }));
     h.appendChild(btn('＋', 'Add card', () => openAdd(group)));
     h.appendChild(btn('⊞', 'Add subgroup', () => {
       stopEditing();
@@ -523,8 +529,10 @@ export function mount(el, ctx) {
       paint();
     }));
     if (namingParent === group.group_id) h.appendChild(groupNameEl(group.group_id));
-    h.appendChild(btn('⇄', `Orientation: ${group.orientation} (toggle)`, () =>
-      mutate('set-orientation', { groupId: group.group_id, orientation: group.orientation === 'vertical' ? 'horizontal' : 'vertical' })));
+    h.appendChild(btn(`⇄ ${group.orientation}`, `Orientation: ${group.orientation} (toggle)`, e => {
+      e.stopPropagation();
+      mutate('set-orientation', { groupId: group.group_id, orientation: group.orientation === 'vertical' ? 'horizontal' : 'vertical' });
+    }));
     h.appendChild(removeBtn('group', group.group_id, 'Remove group'));
     return h;
   }
@@ -532,6 +540,7 @@ export function mount(el, ctx) {
   function bodyEl(group) {
     const horizontal = group.orientation === 'horizontal';
     const body = div(`display:flex;flex-direction:${horizontal ? 'row' : 'column'};align-items:${horizontal ? 'flex-start' : 'stretch'};flex-wrap:${horizontal ? 'wrap' : 'nowrap'};padding:4px;min-height:40px`);
+    body.className = 'cards';
     for (const sub of group.groups) body.appendChild(groupEl(sub));
     for (const card of group.cards) body.appendChild(cardEl(card, group));
     if (addingGroupId === group.group_id) body.appendChild(addFormEl(group));
@@ -549,7 +558,9 @@ export function mount(el, ctx) {
 
   function groupEl(group) {
     const tile = div('border:1px solid #3a3a3a;border-radius:8px;margin:6px;background:#1f1f23;min-width:180px;flex:0 1 auto');
-    tile.className = 'board-group';
+    tile.className = 'board-group group';
+    tile.dataset.groupId = String(group.group_id);
+    tile.dataset.orientation = group.orientation;
     tile.draggable = !editorOpen();
     tile.addEventListener('dragstart', e => {
       e.stopPropagation();
@@ -578,33 +589,41 @@ export function mount(el, ctx) {
     return bar;
   }
 
+  function addTopGroupBtn() {
+    const add = btn('＋ group', 'Add top-level group', () => {
+      stopEditing();
+      namingParent = null;
+      namingTitle = '';
+      paint();
+    });
+    add.style.margin = '6px';
+    return add;
+  }
+
   function paint() {
     if (disposed) return;
     el.innerHTML = '';
     if (!root()) { el.appendChild(div('opacity:.6;padding:8px', 'No workspace.')); return; }
-    el.appendChild(breadcrumbEl());
     const open = crumb.length ? findPath(data.groups, crumb[crumb.length - 1].group_id) : null;
     if (crumb.length && !open) { crumb = []; } // stale crumb (group removed elsewhere)
     if (open) {
       crumb = open.trail;
+      el.appendChild(breadcrumbEl());
       const pane = div('');
       pane.appendChild(headerEl(open.node));
       pane.appendChild(bodyEl(open.node));
       el.appendChild(pane);
+    } else if (!data.groups.length) {
+      el.appendChild(addTopGroupBtn());
+      if (namingParent === null) el.appendChild(groupNameEl(null));
     } else {
+      el.appendChild(breadcrumbEl());
       const top = div('display:flex;flex-direction:row;flex-wrap:wrap;align-items:flex-start;min-height:60px');
       for (const g of data.groups) top.appendChild(groupEl(g));
       acceptDrag(top);
       top.addEventListener('drop', e => { e.preventDefault(); if (dragGroupId != null) dropGroup(null); });
       el.appendChild(top);
-      const add = btn('＋ group', 'Add top-level group', () => {
-        stopEditing();
-        namingParent = null;
-        namingTitle = '';
-        paint();
-      });
-      add.style.margin = '6px';
-      el.appendChild(add);
+      el.appendChild(addTopGroupBtn());
       if (namingParent === null) el.appendChild(groupNameEl(null));
     }
     const focus = el.querySelector('.board-card textarea')
@@ -641,5 +660,5 @@ export function mount(el, ctx) {
     repaint();
   });
   repaint();
-  return () => { disposed = true; clearTimeout(removeTimer); clearTimeout(drillTimer); };
+  return () => { disposed = true; clearTimeout(removeTimer); };
 }

@@ -181,6 +181,35 @@ export const plugin = {
       return mustCard(db, Number(payload.cardId));
     }
 
+    if (action === 'update-card') {
+      const card = mustCard(db, Number(payload.cardId));
+      let color = card.color;
+      if (payload.color !== undefined) {
+        color = payload.color == null ? null : String(payload.color);
+        if (color != null && !STICKY_COLORS.includes(color)) throw fail('BOARD_BAD_INPUT', `Not a sticky color: ${color}`);
+      }
+      let title = card.title;
+      let ref = card.ref;
+      if (payload.name !== undefined && payload.name !== null) {
+        const t = String(payload.name).trim();
+        if (t) title = t;
+      }
+      if (payload.text !== undefined && payload.text !== null) {
+        const t = String(payload.text).trim();
+        if (t) {
+          if (card.kind === 'note') {
+            ref = t;
+            if (payload.name === undefined) title = t;
+          } else if (card.kind === 'link' && payload.name === undefined) {
+            title = t;
+          }
+        }
+      }
+      db.prepare('UPDATE board_cards SET color=?, title=?, ref=? WHERE card_id=?')
+        .run(color, title, ref, card.card_id);
+      return mustCard(db, card.card_id);
+    }
+
     if (action === 'set-orientation') {
       const orientation = String(payload.orientation || '');
       if (!['horizontal', 'vertical'].includes(orientation)) throw fail('BOARD_BAD_INPUT', `Unknown orientation: ${orientation}`);

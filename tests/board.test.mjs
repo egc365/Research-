@@ -175,6 +175,45 @@ test('color round-trips on file, link, and note cards', async t => {
   );
 });
 
+test('set-orientation writes the group row; a later tree read returns it', async t => {
+  const root = workspace(t);
+  const g = await act(root, 'add-group', { title: 'plans' });
+  assert.equal(g.orientation, 'vertical');
+  const flipped = await act(root, 'set-orientation', { groupId: g.group_id, orientation: 'horizontal' });
+  assert.equal(flipped.orientation, 'horizontal');
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(path.join(root, '.research-ops', 'board.sqlite3'));
+  const row = db.prepare('SELECT title, orientation FROM board_groups WHERE group_id=?').get(g.group_id);
+  db.close();
+  assert.equal(row.title, 'plans');
+  assert.equal(row.orientation, 'horizontal');
+  const { groups } = await act(root, 'tree');
+  assert.equal(groups[0].orientation, 'horizontal');
+  assert.equal(groups[0].title, 'plans');
+});
+
+test('update-card writes color and text in one call', async t => {
+  const root = workspace(t);
+  const g = await act(root, 'add-group', { title: 'G' });
+  const { STICKY_COLORS } = await import('../plugins/server/stickies.mjs');
+  const note = await act(root, 'add-card', { groupId: g.group_id, kind: 'note', ref: 'old' });
+  const link = await act(root, 'add-card', { groupId: g.group_id, kind: 'link', ref: 'http://127.0.0.1:9', title: 'old' });
+  const file = await act(root, 'add-card', { groupId: g.group_id, kind: 'file', ref: 'plans/README.md' });
+  const noteOut = await act(root, 'update-card', { cardId: note.card_id, color: STICKY_COLORS[1], text: 'hello\nworld' });
+  assert.equal(noteOut.color, STICKY_COLORS[1]);
+  assert.equal(noteOut.ref, 'hello\nworld');
+  const linkOut = await act(root, 'update-card', { cardId: link.card_id, color: STICKY_COLORS[2], name: 'renamed' });
+  assert.equal(linkOut.color, STICKY_COLORS[2]);
+  assert.equal(linkOut.title, 'renamed');
+  const fileOut = await act(root, 'update-card', { cardId: file.card_id, color: STICKY_COLORS[3] });
+  assert.equal(fileOut.color, STICKY_COLORS[3]);
+  assert.equal(fileOut.ref, 'plans/README.md');
+  await assert.rejects(
+    act(root, 'update-card', { cardId: note.card_id, color: '#123456' }),
+    e => e.code === 'BOARD_BAD_INPUT'
+  );
+});
+
 test('agent surface may read the tree but never mutate', async t => {
   const root = workspace(t);
   const a = await act(root, 'add-group', { title: 'A' });
@@ -186,6 +225,7 @@ test('agent surface may read the tree but never mutate', async t => {
     ['add-card', { groupId: a.group_id, kind: 'note', ref: 'nope' }],
     ['rename', { groupId: a.group_id, title: 'nope' }],
     ['set-orientation', { groupId: a.group_id, orientation: 'horizontal' }],
+    ['update-card', { cardId: card.card_id, color: null, text: 'nope' }],
     ['move', { cardId: card.card_id, toGroupId: a.group_id, sortOrder: 5 }],
     ['remove', { cardId: card.card_id }]
   ];
