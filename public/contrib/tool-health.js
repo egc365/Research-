@@ -1,15 +1,11 @@
-// Contribution: tool / port health board. The probe list is the same list the
-// launchpad renders — the built-in programs plus this workspace's `links`
-// preference — so adding a link in one place adds it to both. Extra targets
-// can also arrive through wiring config: { targets: [{label,url}] }.
-const PROGRAM_DEFAULTS = [
+// Contribution: tool / port health board. The probe list is this surface,
+// the machine's programs (public/contrib/lib/programs.js), this workspace's
+// `links` preference, and extra wiring config: { targets: [{label,url}] }.
+import { PROGRAM_DEFAULTS } from './lib/programs.js';
+
+const SURFACE_TARGETS = [
   { label: 'Research Ops (owner)', url: 'http://127.0.0.1:8787/api/surface' },
-  { label: 'Research Ops (agent)', url: 'http://127.0.0.1:8788/api/surface' },
-  { label: 'Extraction app', url: 'http://127.0.0.1:7860' },
-  { label: 'EPUB extract', url: 'http://127.0.0.1:7861' },
-  { label: 'Extraction review', url: 'http://127.0.0.1:7870' },
-  { label: 'Promotion center', url: 'http://127.0.0.1:8860' },
-  { label: 'Revision center', url: 'http://127.0.0.1:8880' }
+  { label: 'Research Ops (agent)', url: 'http://127.0.0.1:8788/api/surface' }
 ];
 
 export function mount(el, ctx) {
@@ -25,7 +21,7 @@ export function mount(el, ctx) {
       links = Array.isArray(prefs.workspace?.links) ? prefs.workspace.links : [];
     } catch { /* prefs are optional for probing */ }
     const seen = new Set();
-    return [...configured, ...PROGRAM_DEFAULTS, ...links].filter(t => {
+    return [...configured, ...SURFACE_TARGETS, ...PROGRAM_DEFAULTS, ...links].filter(t => {
       if (!t?.url || seen.has(t.url)) return false;
       seen.add(t.url);
       return true;

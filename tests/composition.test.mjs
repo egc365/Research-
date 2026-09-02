@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { ControlStore } from '../src/store.mjs';
-import { catalogRows, defaultWiring, retired, stations, contributions, wiringRemovals, wiringAdditions, stationEnables } from '../plugins/registry.mjs';
+import { catalogRows, defaultWiring, retired, stations, contributions, wiringRemovals, wiringAdditions, wiringConfigSeeds, stationEnables } from '../plugins/registry.mjs';
+import { PROGRAM_DEFAULTS } from '../public/contrib/lib/programs.js';
 
 function freshStore(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-ops-comp-'));
@@ -444,4 +445,47 @@ test('apps-widget seeds on the dashboard and the one-shot addition runs once', t
   store.db.prepare("DELETE FROM station_contributions WHERE contribution_id='apps-widget'").run();
   store.applyWiringAdditions(wiringAdditions);
   assert.ok(!wired().includes('apps-widget'));
+});
+
+test('dashboard apps-widget default wiring carries the five programs', t => {
+  const { store } = freshStore(t);
+  store.syncCatalog(catalogRows([]));
+  store.seedStationWiring(defaultWiring);
+  const row = store.stationContributions('dashboard-viewer').find(r => r.contribution_id === 'apps-widget');
+  assert.deepEqual(row.config.items, PROGRAM_DEFAULTS);
+  const raw = store.db.prepare(
+    "SELECT config_json FROM station_contributions WHERE station_id='dashboard-viewer' AND contribution_id='apps-widget'"
+  ).get();
+  assert.equal(raw.config_json, JSON.stringify({ items: PROGRAM_DEFAULTS }));
+  store.applyWiringConfigSeeds(wiringConfigSeeds);
+  store.applyWiringConfigSeeds(wiringConfigSeeds);
+  const again = store.stationContributions('dashboard-viewer').find(r => r.contribution_id === 'apps-widget');
+  assert.deepEqual(again.config.items, PROGRAM_DEFAULTS);
+});
+
+test('apps-widget program items seed once; owner-emptied stays empty', t => {
+  const { store } = freshStore(t);
+  store.syncCatalog(catalogRows([]));
+  store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'board-view', sortOrder: 15 });
+  store.setStationContribution({
+    stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'apps-widget', sortOrder: 20, config: {}
+  });
+  const seed = wiringConfigSeeds.find(r => r.id === '20260902-apps-widget-program-items');
+  assert.ok(seed);
+  assert.equal(seed.stationId, 'dashboard-viewer');
+  assert.equal(seed.slotName, 'main');
+  assert.equal(seed.contributionId, 'apps-widget');
+  assert.deepEqual(seed.config.items, PROGRAM_DEFAULTS);
+  store.applyWiringConfigSeeds(wiringConfigSeeds);
+  const items = () => store.stationContributions('dashboard-viewer').find(r => r.contribution_id === 'apps-widget').config.items;
+  assert.deepEqual(items(), PROGRAM_DEFAULTS);
+  const meta = store.db.prepare("SELECT value FROM app_meta WHERE key=?").get('wiring-config-seed:20260902-apps-widget-program-items');
+  assert.ok(meta);
+  store.applyWiringConfigSeeds(wiringConfigSeeds);
+  assert.deepEqual(items(), PROGRAM_DEFAULTS);
+  store.setStationContribution({
+    stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'apps-widget', sortOrder: 20, config: { items: [] }
+  });
+  store.applyWiringConfigSeeds(wiringConfigSeeds);
+  assert.deepEqual(items(), []);
 });

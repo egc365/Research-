@@ -11,7 +11,7 @@
 // cards. Every mutation goes through the board store and the view repaints
 // from 'tree'. config.mode 'whiteboard' keeps the same rows in memory until
 // Save to project.
-import { styleSticky, paletteEl, stickyKey, isolateStickyPointer, colorForLabel, DEFAULT_COLOR } from '../lib/sticky.js';
+import { styleSticky, paletteEl, stickyKey, isolateStickyPointer, colorForLabel, DEFAULT_STICKY_COLOR } from '../lib/sticky.js';
 import { boardStore } from '../lib/board-store.js';
 import { MAX_DEPTH, LANE_GAP } from '../lib/board-rules.js';
 
@@ -426,7 +426,7 @@ export function open(ctx, config, view) {
   function addFormEl(lane) {
     const form = document.createElement('form');
     form.className = 'board-add-card';
-    styleSticky(form, addColor || DEFAULT_COLOR);
+    styleSticky(form, addColor || DEFAULT_STICKY_COLOR);
     isolateStickyPointer(form);
     form.addEventListener('submit', e => { e.preventDefault(); submitAdd(lane); });
     form.addEventListener('keydown', e => {
