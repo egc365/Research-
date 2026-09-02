@@ -41,6 +41,21 @@ function fail(code, message) {
   return error;
 }
 
+function workspaceRelativePath(rootPath, input, emptyMessage) {
+  const raw = String(input ?? '');
+  if (!raw.trim()) throw fail('STICKY_BAD_INPUT', emptyMessage);
+  const root = path.resolve(String(rootPath || ''));
+  let relative = raw;
+  if (path.isAbsolute(raw)) relative = path.relative(root, path.resolve(raw));
+  const escaped = !relative
+    || relative === '..'
+    || relative.startsWith(`..${path.sep}`)
+    || path.isAbsolute(relative)
+    || relative.split(/[/\\]/).includes('..');
+  if (escaped) throw fail('STICKY_BAD_INPUT', 'Sticky paths are workspace-relative');
+  return relative;
+}
+
 export const plugin = {
   id: 'stickies',
   label: 'Sticky notes',
@@ -64,11 +79,7 @@ export const plugin = {
     }
 
     if (action === 'set') {
-      const notePath = String(payload.path || '').trim();
-      if (!notePath) throw fail('STICKY_BAD_INPUT', 'A sticky needs a workspace-relative path');
-      if (notePath.startsWith('/') || notePath.split('/').includes('..')) {
-        throw fail('STICKY_BAD_INPUT', 'Sticky paths are workspace-relative');
-      }
+      const notePath = workspaceRelativePath(payload.rootPath, payload.path, 'A sticky needs a workspace-relative path');
       const text = String(payload.text ?? '').trim();
       if (!text) { // an emptied sticky comes off the folder
         db.prepare('DELETE FROM sticky_notes WHERE path=?').run(notePath);
@@ -85,8 +96,7 @@ export const plugin = {
     }
 
     if (action === 'remove') {
-      const notePath = String(payload.path || '').trim();
-      if (!notePath) throw fail('STICKY_BAD_INPUT', 'Remove needs a path');
+      const notePath = workspaceRelativePath(payload.rootPath, payload.path, 'Remove needs a path');
       db.prepare('DELETE FROM sticky_notes WHERE path=?').run(notePath);
       return { removed: notePath };
     }

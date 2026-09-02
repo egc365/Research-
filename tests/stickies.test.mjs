@@ -60,3 +60,14 @@ test('agent surface may list but never write', async t => {
     await assert.rejects(act(root, action, payload, 'agent'), e => e.code === 'OWNER_SURFACE_ONLY');
   }
 });
+
+test('set with an absolute path under rootPath stores under the relative key', async t => {
+  const root = workspace(t);
+  fs.mkdirSync(path.join(root, 'demo-test-1'));
+  fs.writeFileSync(path.join(root, 'testing '), '');
+  await act(root, 'set', { path: path.join(root, 'demo-test-1'), text: 'on the folder' });
+  await act(root, 'set', { path: path.join(root, 'testing '), text: 'on the file' });
+  const { notes } = await act(root, 'list');
+  assert.equal(notes['demo-test-1'].text, 'on the folder');
+  assert.equal(notes['testing '].text, 'on the file');
+});

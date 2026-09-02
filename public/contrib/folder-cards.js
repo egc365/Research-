@@ -29,7 +29,7 @@ export async function mount(el, ctx) {
     save.textContent = note ? 'Save' : 'Stick it';
     save.onclick = async e => {
       e.stopPropagation();
-      try { await stickyCall('set', { path: entry.path, text: area.value, color }); }
+      try { await stickyCall('set', { path: entry.relativePath, text: area.value, color }); }
       catch (error) { ctx.notify(error.message, 'error'); }
       editingPath = null;
       repaint();
@@ -73,11 +73,12 @@ export async function mount(el, ctx) {
         if (isDir) ctx.bus.emit('reveal-path', { path: entry.path });
         else ctx.selectFile(entry.path).catch(e => ctx.notify(e.message, 'error'));
       };
-      const note = stickies.notes?.[entry.path];
+      const stickyPath = entry.relativePath;
+      const note = stickies.notes?.[stickyPath];
       // Color by function when a labeled path gets its first sticky: the same
       // label always suggests the same color; the palette overrides it.
       const defaultColor = colorForLabel(pathLabels[0]?.label);
-      if (editingPath === entry.path) {
+      if (editingPath === stickyPath) {
         focusArea = stickyEditor(card, entry, note, defaultColor);
       } else if (note) {
         const sticky = document.createElement('div');
@@ -85,14 +86,14 @@ export async function mount(el, ctx) {
         sticky.style.marginTop = '6px';
         sticky.textContent = note.text;
         sticky.title = 'Edit sticky';
-        sticky.onclick = e => { e.stopPropagation(); editingPath = entry.path; repaint(); };
+        sticky.onclick = e => { e.stopPropagation(); editingPath = stickyPath; repaint(); };
         card.append(sticky);
       } else {
         const add = document.createElement('button');
         add.textContent = '＋ sticky';
         add.className = 'muted';
         add.style.cssText = 'margin-top:6px;font-size:11px;background:none;border:1px dashed #555;border-radius:4px;color:inherit;cursor:pointer;padding:1px 6px;opacity:.6';
-        add.onclick = e => { e.stopPropagation(); editingPath = entry.path; repaint(); };
+        add.onclick = e => { e.stopPropagation(); editingPath = stickyPath; repaint(); };
         card.append(add);
       }
       grid.append(card);
