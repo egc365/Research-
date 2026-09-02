@@ -256,8 +256,6 @@ function makeContext(stationId, config, wiringRows = null, loc = {}) {
     setCard(cardId) { kernel.card = cardId; bus.emit('card', cardId); },
     station: stationId,
     config: config || {},
-    contributionId: loc.contributionId,
-    slotName: loc.slotName,
     request,
     action: (serviceId, action, payload = {}) =>
       request(`/api/plugins/${encodeURIComponent(serviceId)}/action`, {
@@ -488,6 +486,7 @@ function renderMissingFrame() {
 }
 
 async function renderEmptyFrame() {
+  stage.replaceChildren();
   stage.className = 'stage layout-main';
   const frame = document.createElement('div');
   if (kernel.workspace) {
@@ -543,16 +542,9 @@ function readDrag(event) {
   if (widget) {
     try { return { kind: 'widget', ...JSON.parse(widget) }; } catch { /* fall through */ }
   }
-  const app = event.dataTransfer.getData('application/x-ro-app');
-  if (app) {
-    try { return { kind: 'app', ...JSON.parse(app) }; } catch { /* fall through */ }
-  }
   const plain = event.dataTransfer.getData('text/plain') || '';
   if (plain.startsWith('ro-widget:')) {
     try { return { kind: 'widget', ...JSON.parse(plain.slice(10)) }; } catch { return null; }
-  }
-  if (plain.startsWith('ro-app:')) {
-    try { return { kind: 'app', ...JSON.parse(plain.slice(7)) }; } catch { return null; }
   }
   return null;
 }
@@ -1387,7 +1379,7 @@ function renderCustomize(tab = 'appearance') {
   if (tab === 'dashboard') {
     const links = mergedPrefs().links || [];
     pane.innerHTML = `
-      <div class="muted" style="margin-bottom:8px">The dashboard's content blocks (board, inbox, statistics) are wired in Plugins. Extra launchpad links for THIS workspace live here.</div>
+      <div class="muted" style="margin-bottom:8px">The dashboard's content blocks (board, inbox, statistics) are wired in Plugins. Extra program links for THIS workspace live here; the tool-health service reads them.</div>
       <div data-role="links"></div>
       <div class="pm-add"><input data-role="new-label" placeholder="label (e.g. Extraction app)">
         <input data-role="new-url" class="mono" placeholder="http://127.0.0.1:7860">

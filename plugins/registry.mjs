@@ -54,7 +54,7 @@ export const stations = [
   {
     id: 'health-monitor', label: 'Tool health', version: '1.1.0',
     manifest: {
-      description: 'Up/down and latency for the machine’s tool ports — the launchpad’s program list plus this workspace’s links, probed from the server (loopback only).',
+      description: 'Up/down and latency for the machine’s tool ports. Tool-health reads the program list plus this workspace’s links, probed from the server (loopback only).',
       layout: 'main', slots: ['main'], icon: '🩺', category: 'Monitor'
     }
   },

@@ -2,8 +2,8 @@
 // wireable into a station, where it also lists Stations as chips the
 // owner can drag into an apps widget.
 export function mount(el, ctx) {
-  function chip(tag, icon, name, title) {
-    const node = document.createElement(tag);
+  function chip(icon, name, title) {
+    const node = document.createElement('div');
     node.className = 'launch-chip';
     if (title) node.title = title;
     const ic = document.createElement('span');
@@ -56,7 +56,7 @@ export function mount(el, ctx) {
       for (const row of stations) {
         let manifest = row.manifest || {};
         if (typeof manifest === 'string') { try { manifest = JSON.parse(manifest); } catch { manifest = {}; } }
-        const node = chip('div', manifest.icon || '▦', row.label || row.plugin_id, row.plugin_id);
+        const node = chip(manifest.icon || '▦', row.label || row.plugin_id, row.plugin_id);
         node.onclick = () => ctx.activateStation(row.plugin_id);
         dragApp(node, { kind: 'app', station: row.plugin_id, label: row.label || row.plugin_id });
         stationsGroup.row.append(node);
@@ -70,7 +70,7 @@ export function mount(el, ctx) {
       const name = ws.label || ws.root_path.split('/').filter(Boolean).pop() || ws.root_path;
       const missing = ws.exists === false;
       const title = missing ? `${ws.root_path} (missing on disk)` : ws.root_path;
-      const node = chip('div', missing ? '⚠' : '🗂', name, title);
+      const node = chip(missing ? '⚠' : '🗂', name, title);
       if (!isCurrent) node.onclick = () => ctx.bus.emit('switch-workspace', { root: ws.root_path });
       wsGroup.row.append(node);
     }

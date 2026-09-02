@@ -36,7 +36,7 @@ export function mount(el, ctx) {
   function paint() {
     el.replaceChildren();
     const card = document.createElement('div');
-    card.className = 'card apps-widget-card';
+    card.className = 'card';
     const row = document.createElement('div');
     row.className = 'launch-row';
     for (const [index, item] of items().entries()) {
