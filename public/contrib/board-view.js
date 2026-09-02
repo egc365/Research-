@@ -625,7 +625,7 @@ export function mount(el, ctx) {
     return c;
   }
 
-  function openAdd(group, depth) {
+  function openAdd(group) {
     stopEditing();
     adding = { groupId: group ? group.group_id : null };
     addBody = '';
@@ -676,7 +676,6 @@ export function mount(el, ctx) {
   function addFormEl(group, depth) {
     const form = document.createElement('form');
     form.className = 'board-add-card';
-    form.dataset.depth = String(depth);
     styleSticky(form, resolveColor({ kind: addKind === 'folder' ? 'note' : addKind, ref: addRef, color: addColor }));
     isolateStickyPointer(form);
     form.addEventListener('submit', e => { e.preventDefault(); submitAdd(group); });
@@ -788,7 +787,7 @@ export function mount(el, ctx) {
       renamingGroupId = group.group_id;
       paint();
     }));
-    h.appendChild(btn('＋', 'Add file or folder', () => openAdd(group, depth)));
+    h.appendChild(btn('＋', 'Add file or folder', () => openAdd(group)));
     h.appendChild(btn(`⇄ ${group.orientation}`, `Orientation: ${group.orientation} (toggle)`, e => {
       e.stopPropagation();
       mutate('set-orientation', { groupId: group.group_id, orientation: group.orientation === 'vertical' ? 'horizontal' : 'vertical' });
@@ -833,7 +832,7 @@ export function mount(el, ctx) {
   }
 
   function addTopGroupBtn() {
-    const add = btn('＋ group', 'Add a folder or file at the workspace root', () => openAdd(null, 0));
+    const add = btn('＋ group', 'Add a folder or file at the workspace root', () => openAdd(null));
     add.style.margin = '6px';
     return add;
   }

@@ -317,12 +317,45 @@ const CATEGORY_ORDER = ['Curate', 'Monitor'];
 const HOME_STATION = 'dashboard-viewer';
 
 let inboxDispose = null;
+let inboxBadgeEl = null;
+let inboxBadgeStarted = false;
+let inboxBadgeTimer = null;
 
 function closeNavDrops() {
   if (inboxDispose) { inboxDispose(); inboxDispose = null; }
   for (const panel of stationBar.querySelectorAll('.nav-drop-panel')) panel.hidden = true;
   for (const wrap of stationBar.querySelectorAll('.nav-drop')) wrap.classList.remove('open');
 }
+
+async function refreshInboxBadge() {
+  if (!inboxBadgeEl) return;
+  try {
+    const { count } = await request('/api/inbox/count');
+    const n = Number(count) || 0;
+    inboxBadgeEl.textContent = n ? String(n) : '';
+    inboxBadgeEl.hidden = !n;
+    const button = inboxBadgeEl.closest('button');
+    if (button) button.setAttribute('aria-label', n ? `Inbox ${n}` : 'Inbox');
+  } catch { /* badge is best-effort */ }
+}
+
+function startInboxBadge() {
+  if (inboxBadgeStarted) return;
+  inboxBadgeStarted = true;
+  const refresh = () => refreshInboxBadge();
+  bus.on('fs-changed', refresh);
+  bus.on('artifact-changed', refresh);
+  bus.on('file-saved', refresh);
+  bus.on('workspace', refresh);
+  inboxBadgeTimer = setInterval(refresh, 60_000);
+}
+
+window.addEventListener('beforeunload', () => {
+  if (inboxBadgeTimer) {
+    clearInterval(inboxBadgeTimer);
+    inboxBadgeTimer = null;
+  }
+});
 
 function stationButton(row) {
   const button = document.createElement('button');
@@ -341,14 +374,24 @@ function stationButton(row) {
   return button;
 }
 
-function navDropdown({ id, label, fill }) {
+function navDropdown({ id, label, fill, badge = false }) {
   const wrap = document.createElement('div');
   wrap.className = 'nav-drop';
   wrap.id = id;
   const button = document.createElement('button');
   button.type = 'button';
-  button.textContent = label;
   button.setAttribute('aria-haspopup', 'true');
+  button.setAttribute('aria-label', label);
+  const labelEl = document.createElement('span');
+  labelEl.textContent = label;
+  button.append(labelEl);
+  if (badge) {
+    const countEl = document.createElement('span');
+    countEl.className = 'inbox-badge';
+    countEl.hidden = true;
+    button.append(countEl);
+    inboxBadgeEl = countEl;
+  }
   const panel = document.createElement('div');
   panel.className = 'nav-drop-panel';
   panel.hidden = true;
@@ -372,7 +415,8 @@ async function fillInbox(panel) {
   panel.append(host);
   try {
     const module = await loadModule(catalogClient('inbox'));
-    const { ctx, dispose } = makeContext(kernel.activeStation, {});
+    const config = { ...(mergedPrefs().inbox || {}) };
+    const { ctx, dispose } = makeContext(kernel.activeStation, config);
     const unmount = await module.mount(host, ctx);
     inboxDispose = () => { if (typeof unmount === 'function') unmount(); dispose(); };
   } catch (error) {
@@ -422,8 +466,11 @@ function renderStationBar() {
   stationBar.append(navDropdown({
     id: 'navInbox',
     label: 'Inbox',
-    fill: fillInbox
+    fill: fillInbox,
+    badge: true
   }));
+  startInboxBadge();
+  refreshInboxBadge();
   const wsName = kernel.workspace
     ? (kernel.workspace.label || kernel.workspace.root_path.split('/').filter(Boolean).pop() || 'Workspace')
     : 'Workspace';
@@ -1262,6 +1309,8 @@ function renderCustomize(tab = 'appearance') {
       <div class="ws-form">
         <label>Name <input data-role="ws-label" value="${esc(kernel.workspace.label || '')}"></label>
         <label>Icon (emoji, shown in the switcher) <input data-role="ws-icon" value="${esc(p.icon || '')}" maxlength="4" style="width:70px"></label>
+        <label>Inbox watches folder <input data-role="ws-inbox-watch" value="${esc(p.inbox?.watch || '')}" placeholder="outputs">
+          <span class="muted">workspace-relative; empty = off</span></label>
         <div class="muted mono" style="word-break:break-all">${esc(kernel.workspace.root_path)}</div>
         <div class="ws-actions" style="gap:6px">
           <button data-role="ws-remove" class="danger">Remove workspace…</button>
@@ -1274,7 +1323,8 @@ function renderCustomize(tab = 'appearance') {
         const label = pane.querySelector('[data-role="ws-label"]').value.trim() || null;
         await request('/api/workspaces', { method: 'POST', body: JSON.stringify({ rootPath: kernel.workspace.root_path, label }) });
         const icon = pane.querySelector('[data-role="ws-icon"]').value.trim();
-        await savePrefs({ icon });
+        const watch = pane.querySelector('[data-role="ws-inbox-watch"]').value.trim();
+        await savePrefs({ icon, inbox: { watch } });
         notify('Workspace updated.', 'ok');
         await loadWorkspaces(kernel.workspace.root_path);
         renderCustomize('workspace');

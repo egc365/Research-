@@ -42,6 +42,12 @@ body { margin: 0; background: var(--background); color: var(--text);
 .nav-cluster-label { font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
   opacity: .5; margin-right: 2px; }
 .nav-drop { position: relative; }
+.nav-drop > button { display: inline-flex; align-items: center; gap: 6px; }
+.inbox-badge { display: inline-flex; min-width: 1.15em; padding: 0 6px; border-radius: 999px;
+  background: var(--accent); color: var(--on-accent); font-size: .78em; line-height: 1.4;
+  justify-content: center; }
+.inbox-badge[hidden] { display: none; }
+.inbox-group { margin: 8px 0 4px; font-size: .78em; letter-spacing: .04em; text-transform: uppercase; }
 .nav-drop-panel { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40;
   min-width: 280px; max-width: 480px; max-height: 70vh; overflow: auto;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
