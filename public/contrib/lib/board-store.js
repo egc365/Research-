@@ -3,8 +3,9 @@
 // localStorage, keyed by workspace root. Save to project is the only crossing.
 import {
   fail, needName, needLaneName, refuseDuplicateLane, idOrNull, relPath, childRel,
-  parseColor, parseOrientation, parseFace, parseIcon, parseFields, parseWidth, defaultIcon, viewCard,
-  nextOrder, laneDepth, subtreeHeight, assertDepth, assertNoCycle, imageDataUrl, imageFileName, nestTree
+  parseColor, parseOrientation, parseFace, parseIcon, parseFields, parseWidth, parseCoord, defaultIcon, viewCard,
+  nextOrder, laneDepth, subtreeHeight, assertDepth, assertNoCycle, imageDataUrl, imageFileName, nestTree,
+  laneSlug, nextSpot, settleLanes
 } from './board-rules.js';
 
 function storageKey(rootPath) {
@@ -71,6 +72,9 @@ function mustCard(state, cardId) {
 
 const parentOf = state => id => mustLane(state, id).parent_lane_id;
 const childrenOf = state => id => state.lanes.filter(l => l.parent_lane_id === id).map(l => l.lane_id);
+const topLanes = (state, surface, exceptId = null) => state.lanes.filter(l => l.surface === surface && l.parent_lane_id == null && l.lane_id !== exceptId);
+const slugOn = (state, surface, name, exceptId = null) =>
+  laneSlug(name, new Set(state.lanes.filter(l => l.surface === surface && l.lane_id !== exceptId).map(l => l.slug)));
 
 function treeFrom(state, surface) {
   return nestTree(
@@ -101,12 +105,19 @@ function apply(state, action, payload) {
       assertDepth(laneDepth(parentLaneId, parentOf(state)) + 1);
     }
     const siblings = state.lanes.filter(l => l.surface === surface && l.parent_lane_id === parentLaneId);
+    const name = refuseDuplicateLane(needLaneName(payload.name), siblings);
+    const x = parseCoord(payload.x, 'x');
+    const y = parseCoord(payload.y, 'y');
+    const spot = parentLaneId != null ? { x: null, y: null, w: null }
+      : x == null || y == null ? { ...nextSpot(topLanes(state, surface)), w: parseWidth(payload.w) } : { x, y, w: parseWidth(payload.w) };
     const row = {
       lane_id: state.nextLane++,
       surface,
       parent_lane_id: parentLaneId,
-      name: refuseDuplicateLane(needLaneName(payload.name), siblings),
+      name,
+      slug: slugOn(state, surface, name),
       orientation: payload.orientation == null ? 'vertical' : parseOrientation(payload.orientation),
+      ...spot,
       sort_order: nextOrder(topOrder(state.lanes, l => l.surface === surface && l.parent_lane_id === parentLaneId)),
       created_at: now()
     };
@@ -169,6 +180,14 @@ function apply(state, action, payload) {
     const lane = mustLane(state, Number(payload.laneId));
     const siblings = state.lanes.filter(l => l !== lane && l.surface === lane.surface && l.parent_lane_id === lane.parent_lane_id);
     lane.name = refuseDuplicateLane(needLaneName(payload.name), siblings);
+    lane.slug = slugOn(state, lane.surface, lane.name, lane.lane_id);
+    return lane;
+  }
+
+  if (action === 'set-width') {
+    const lane = mustLane(state, Number(payload.laneId));
+    if (lane.parent_lane_id != null) throw fail('BOARD_BAD_INPUT', 'Only a top-level lane has a width; a nested lane flows in its parent');
+    lane.w = parseWidth(payload.w);
     return lane;
   }
 
@@ -219,18 +238,30 @@ function apply(state, action, payload) {
     return viewCard(card);
   }
 
+  // The server's rule: into a parent drops the position, onto the canvas
+  // sits at x, y (the payload's, else its own, else the next spot).
   if (action === 'move-lane') {
-    const sortOrder = Number(payload.sortOrder);
-    if (!Number.isFinite(sortOrder)) throw fail('BOARD_BAD_INPUT', 'Move needs a numeric sortOrder');
     const lane = mustLane(state, Number(payload.laneId));
-    const toParentId = idOrNull(payload.toParentLaneId);
+    const toParentId = idOrNull(payload.parentLaneId);
+    let spot = { x: null, y: null, w: null };
     if (toParentId != null) {
       laneOn(state, toParentId, lane.surface);
       assertNoCycle(lane.lane_id, toParentId, parentOf(state));
       assertDepth(laneDepth(toParentId, parentOf(state)) + subtreeHeight(lane.lane_id, childrenOf(state)));
+    } else {
+      const x = parseCoord(payload.x, 'x');
+      const y = parseCoord(payload.y, 'y');
+      spot = x != null && y != null ? { x, y, w: lane.w }
+        : lane.x != null ? { x: lane.x, y: lane.y, w: lane.w }
+          : { ...nextSpot(topLanes(state, lane.surface, lane.lane_id)), w: lane.w };
     }
     refuseDuplicateLane(lane.name, state.lanes.filter(l => l !== lane && l.surface === lane.surface && l.parent_lane_id === toParentId));
+    const sortOrder = payload.sortOrder != null ? Number(payload.sortOrder)
+      : toParentId === lane.parent_lane_id ? lane.sort_order
+        : nextOrder(topOrder(state.lanes, l => l.surface === lane.surface && l.parent_lane_id === toParentId));
+    if (!Number.isFinite(sortOrder)) throw fail('BOARD_BAD_INPUT', 'Move needs a numeric sortOrder');
     lane.parent_lane_id = toParentId;
+    Object.assign(lane, spot);
     lane.sort_order = sortOrder;
     return lane;
   }
@@ -276,6 +307,8 @@ function memoryStore(ctx) {
     root = next;
     try { state = parseModel(readStorage(storageKey(root))); }
     catch { state = emptyModel(); }
+    // A sketch from before the canvas gets positions and slugs once.
+    if (settleLanes(state.lanes).length) persist();
   }
 
   function persist() {

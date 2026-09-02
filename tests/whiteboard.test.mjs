@@ -50,7 +50,7 @@ function fakeStorage(t) {
 function sketchModel() {
   return {
     lanes: [
-      { lane_id: 1, surface: '', parent_lane_id: null, name: 'plans', orientation: 'horizontal', sort_order: 100 },
+      { lane_id: 1, surface: '', parent_lane_id: null, name: 'plans', slug: 'plans', orientation: 'horizontal', x: 24, y: 80, w: 560, sort_order: 100 },
       { lane_id: 2, surface: '', parent_lane_id: 1, name: 'q3', orientation: 'vertical', sort_order: 100 },
       { lane_id: 3, surface: 'howdy', parent_lane_id: null, name: 'inside', orientation: 'vertical', sort_order: 100 }
     ],
@@ -180,7 +180,10 @@ test('Save creates <parent>/<name>, writes files flat inside it, lanes into the 
   const inside = await act(ws, 'tree', { surface: `${p}/howdy` });
   assert.deepEqual(inside.lanes.map(l => [l.name, l.cards.map(c => c.ref)]), [['inside', [`${p}/howdy/deep.md`]]]);
   const outline = JSON.parse(fs.readFileSync(path.join(dest, 'LANES.json'), 'utf8'));
-  assert.deepEqual(outline[''].lanes[0].lanes[0], { name: 'q3', orientation: 'vertical', cards: [`${p}/notes.md`, `${p}/notes-2.md`], lanes: [] });
+  assert.deepEqual(outline[''].lanes[0].lanes[0], { name: 'q3', slug: 'q3', orientation: 'vertical', x: null, y: null, w: null, cards: [`${p}/notes.md`, `${p}/notes-2.md`], lanes: [] });
+  assert.deepEqual([outline[''].lanes[0].slug, outline[''].lanes[0].x, outline[''].lanes[0].y, outline[''].lanes[0].w], ['plans', 24, 80, 560]);
+  assert.deepEqual([lanes[0].slug, lanes[0].x, lanes[0].y, lanes[0].w], ['plans', 24, 80, 560], 'the destination rows carry the sketch positions');
+  assert.deepEqual([inside.lanes[0].x, inside.lanes[0].y], [24, 24], 'a sketch lane without a position takes the next spot');
   assert.deepEqual(outline[''].cards, [`${p}/howdy`]);
   assert.deepEqual(outline.howdy.lanes[0].cards, [`${p}/howdy/deep.md`]);
   assert.ok(ws.store.getArtifact(path.join(dest, 'README.md')));
@@ -234,7 +237,7 @@ test('whiteboard sticky text lives on the memory row; width and duplicate lane n
   const q3 = await access.call('add-lane', { name: 'q3' });
   await assert.rejects(access.call('rename', { laneId: q3.lane_id, name: 'plans' }), e => /already here/.test(e.message));
   await access.call('add-lane', { parentLaneId: plans.lane_id, name: 'q3' });
-  await assert.rejects(access.call('move-lane', { laneId: q3.lane_id, toParentLaneId: plans.lane_id, sortOrder: 200 }), e => /already here/.test(e.message));
+  await assert.rejects(access.call('move-lane', { laneId: q3.lane_id, parentLaneId: plans.lane_id, sortOrder: 200 }), e => /already here/.test(e.message));
   await access.call('add-lane', { surface: 'elsewhere', name: 'plans' });
   assert.equal((await access.call('tree')).lanes.length, 2);
 });
@@ -275,4 +278,30 @@ test('the memory store refuses a second file of the same name on a surface, as t
   await access.call('add-card', { surface: 'elsewhere', kind: 'file', name: 'plan.md' });
   const { lanes, cards } = await access.call('tree');
   assert.deepEqual([cards.length, lanes[0].cards.length], [1, 1]);
+});
+
+test('whiteboard rows carry position and slug; a sketch from before the canvas is laid out on load, once', async t => {
+  const ws = workspace(t);
+  const bag = fakeStorage(t);
+  const ctx = { workspace: { root_path: ws.root }, action() { throw new Error('board service should not be called'); } };
+  bag.set(`ro.whiteboard.${ws.root}`, JSON.stringify({ v: 2, nextLane: 3, nextCard: 1, cards: [], lanes: [
+    { lane_id: 1, surface: '', parent_lane_id: null, name: 'Task 1', orientation: 'vertical', sort_order: 100, created_at: '2026-01-01' },
+    { lane_id: 2, surface: '', parent_lane_id: null, name: 'Task 2', orientation: 'vertical', sort_order: 110, created_at: '2026-01-01' }
+  ] }));
+  const access = boardStore(ctx, { mode: 'whiteboard' });
+  const { lanes } = await access.call('tree');
+  assert.deepEqual(lanes.map(l => [l.slug, l.x, l.y, l.w]), [['task-1', 24, 24, null], ['task-2', 328, 24, null]]);
+  assert.deepEqual(parseModel(bag.get(`ro.whiteboard.${ws.root}`)).lanes.map(l => [l.slug, l.x]), [['task-1', 24], ['task-2', 328]], 'written once');
+  const hello = await access.call('add-lane', { name: 'hello', x: 24, y: 80, w: 300 });
+  assert.deepEqual([hello.slug, hello.x, hello.y, hello.w], ['hello', 24, 80, 300]);
+  const inside = await access.call('move-lane', { laneId: hello.lane_id, parentLaneId: 1 });
+  assert.deepEqual([inside.parent_lane_id, inside.x, inside.y, inside.w], [1, null, null, null]);
+  const out = await access.call('move-lane', { laneId: hello.lane_id, parentLaneId: null, x: 24, y: 420 });
+  assert.deepEqual([out.parent_lane_id, out.x, out.y, out.sort_order], [null, 24, 420, 120]);
+  assert.equal((await access.call('set-width', { laneId: hello.lane_id, w: 560 })).w, 560);
+  await assert.rejects(access.call('set-width', { laneId: hello.lane_id, w: -1 }), e => e.code === 'BOARD_BAD_INPUT');
+  assert.equal((await access.call('rename', { laneId: hello.lane_id, name: 'Task 1 again' })).slug, 'task-1-again');
+  assert.equal((await access.call('add-lane', { name: 'task 2' })).slug, 'task-2-2', 'the name differs by case, the slug takes a suffix');
+  const stored = parseModel(bag.get(`ro.whiteboard.${ws.root}`));
+  assert.deepEqual(stored.lanes.find(l => l.lane_id === hello.lane_id), { ...out, name: 'Task 1 again', slug: 'task-1-again', w: 560 });
 });

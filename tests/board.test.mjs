@@ -254,6 +254,7 @@ test('migration: bound groups become lanes with a folder card, cards keep their 
   const before = findAll(ws.root);
   const root = await act(ws, 'tree');
   assert.deepEqual(root.lanes.map(l => [l.name, l.orientation, l.parent_lane_id]), [['plans', 'horizontal', null], ['legacy', 'vertical', null]]);
+  assert.deepEqual(root.lanes.map(l => [l.slug, l.x, l.y]), [['plans', 24, 24], ['legacy', 328, 24]], 'migrated lanes are laid out left to right');
   const plans = root.lanes[0];
   assert.deepEqual(plans.cards.map(c => [c.kind, c.ref, c.title, c.color, c.face, c.icon, c.fields_json]), [
     ['folder', 'plans', 'plans', STICKY_COLORS[2], 'card', 'P', '[{"label":"owner","value":"dan"}]'],
@@ -314,11 +315,107 @@ test('tree nests lanes and cards ordered by sort_order', async t => {
   assert.deepEqual(after.lanes[0].lanes[0].cards.map(c => c.ref), ['plan.md', 'first note']);
 });
 
+// ADR-043: a surface is a canvas. Only a top-level lane carries x, y, w.
+test('the example of done: three lanes at the points the owner dropped them, positions round-trip', async t => {
+  const ws = workspace(t);
+  const hello = await act(ws, 'add-lane', { name: 'hello', x: 24, y: 80 });
+  const feature = await act(ws, 'add-lane', { name: 'feature', orientation: 'horizontal', x: 24, y: 420, w: 560 });
+  const testing = await act(ws, 'add-lane', { name: 'testing', orientation: 'horizontal', x: 620, y: 80 });
+  assert.deepEqual([hello.x, hello.y, hello.w, hello.slug], [24, 80, null, 'hello']);
+  assert.deepEqual([feature.x, feature.y, feature.w, feature.slug, feature.orientation, feature.parent_lane_id], [24, 420, 560, 'feature', 'horizontal', null]);
+  const { lanes } = await act(ws, 'tree');
+  assert.deepEqual(lanes.map(l => [l.slug, l.x, l.y, l.w]), [['hello', 24, 80, null], ['feature', 24, 420, 560], ['testing', 620, 80, null]]);
+  const db = new DatabaseSync(path.join(ws.root, '.research-ops', 'board.sqlite3'));
+  const row = db.prepare('SELECT slug, x, y, w FROM board_lanes WHERE lane_id=?').get(feature.lane_id);
+  db.close();
+  assert.deepEqual({ ...row }, { slug: 'feature', x: 24, y: 420, w: 560 });
+  // No position given: right of the placed lanes (testing ends at 620 + 280), never on top of one.
+  const later = await act(ws, 'add-lane', { name: 'later' });
+  assert.deepEqual([later.x, later.y], [924, 24]);
+  const inner = await act(ws, 'add-lane', { name: 'inner', parentLaneId: testing.lane_id, x: 5, y: 5, w: 100 });
+  assert.deepEqual([inner.x, inner.y, inner.w], [null, null, null]);
+  await assert.rejects(act(ws, 'add-lane', { name: 'off', x: -3, y: 0 }), e => e.code === 'BOARD_BAD_INPUT' && /pixels/.test(e.message));
+});
+
+test('move-lane: onto the canvas at a point makes the lane top-level there; into a parent clears the position', async t => {
+  const ws = workspace(t);
+  const hello = await act(ws, 'add-lane', { name: 'hello', x: 24, y: 80 });
+  const feature = await act(ws, 'add-lane', { name: 'feature', x: 620, y: 80, w: 560 });
+  const inside = await act(ws, 'move-lane', { laneId: feature.lane_id, parentLaneId: hello.lane_id });
+  assert.deepEqual([inside.parent_lane_id, inside.x, inside.y, inside.w, inside.sort_order], [hello.lane_id, null, null, null, 100]);
+  const out = await act(ws, 'move-lane', { laneId: feature.lane_id, parentLaneId: null, x: 24, y: 420 });
+  assert.deepEqual([out.parent_lane_id, out.x, out.y, out.w], [null, 24, 420, null]);
+  assert.equal(out.sort_order, hello.sort_order + 10, 'back on the canvas it orders after the lanes there');
+  // A pure move keeps the sort order; a move with no point keeps the position.
+  const moved = await act(ws, 'move-lane', { laneId: feature.lane_id, parentLaneId: null, x: 30, y: 430 });
+  assert.deepEqual([moved.sort_order, moved.x, moved.y], [out.sort_order, 30, 430]);
+  const same = await act(ws, 'move-lane', { laneId: feature.lane_id, parentLaneId: null });
+  assert.deepEqual([same.x, same.y], [30, 430]);
+  // A nested lane dragged out with no point lands right of the placed lanes.
+  const nested = await act(ws, 'add-lane', { name: 'nested', parentLaneId: hello.lane_id });
+  const placed = await act(ws, 'move-lane', { laneId: nested.lane_id, parentLaneId: null });
+  assert.deepEqual([placed.x, placed.y], [30 + 280 + 24, 24]);
+  await assert.rejects(act(ws, 'move-lane', { laneId: nested.lane_id, parentLaneId: null, x: 'far', y: 1 }), e => e.code === 'BOARD_BAD_INPUT');
+  const { lanes } = await act(ws, 'tree');
+  assert.deepEqual(lanes.map(l => [l.name, l.x, l.y]), [['hello', 24, 80], ['feature', 30, 430], ['nested', 334, 24]]);
+});
+
+test('migration: a board from before the canvas lays its top-level lanes out left to right once and slugs them', async t => {
+  const ws = workspace(t);
+  fs.mkdirSync(path.join(ws.root, '.research-ops'));
+  const old = new DatabaseSync(path.join(ws.root, '.research-ops', 'board.sqlite3'));
+  old.exec(`CREATE TABLE board_lanes (lane_id INTEGER PRIMARY KEY, surface TEXT NOT NULL DEFAULT '', parent_lane_id INTEGER NULL, name TEXT NOT NULL,
+    orientation TEXT NOT NULL DEFAULT 'vertical', sort_order INTEGER NOT NULL DEFAULT 100, created_at TEXT NOT NULL);
+    CREATE TABLE board_cards (card_id INTEGER PRIMARY KEY, surface TEXT NOT NULL DEFAULT '', lane_id INTEGER NULL, kind TEXT NOT NULL, ref TEXT NOT NULL,
+    title TEXT, color TEXT, face TEXT, icon TEXT, fields_json TEXT, width INTEGER, sort_order INTEGER NOT NULL DEFAULT 100, created_at TEXT NOT NULL);
+    INSERT INTO board_lanes (lane_id, surface, parent_lane_id, name, sort_order, created_at) VALUES
+      (1, '', NULL, 'Task 2', 110, '2026-01-01'), (2, '', NULL, 'Task 1', 100, '2026-01-01'), (3, '', 2, 'Task 1', 100, '2026-01-01'),
+      (4, 'hello', NULL, 'execution', 100, '2026-01-01');`);
+  old.close();
+  const { lanes } = await act(ws, 'tree');
+  assert.deepEqual(lanes.map(l => [l.name, l.slug, l.x, l.y, l.w]), [['Task 1', 'task-1', 24, 24, null], ['Task 2', 'task-2', 328, 24, null]]);
+  assert.deepEqual(lanes[0].lanes.map(l => [l.slug, l.x, l.y]), [['task-1-2', null, null]]);
+  assert.deepEqual((await act(ws, 'tree', { surface: 'hello' })).lanes.map(l => [l.slug, l.x, l.y]), [['execution', 24, 24]]);
+  const db = new DatabaseSync(path.join(ws.root, '.research-ops', 'board.sqlite3'));
+  assert.deepEqual(db.prepare('SELECT lane_id, slug, x, y FROM board_lanes ORDER BY lane_id').all().map(r => ({ ...r })),
+    [{ lane_id: 1, slug: 'task-2', x: 328, y: 24 }, { lane_id: 2, slug: 'task-1', x: 24, y: 24 }, { lane_id: 3, slug: 'task-1-2', x: null, y: null }, { lane_id: 4, slug: 'execution', x: 24, y: 24 }]);
+  db.close();
+  // Written once: a lane the owner moves stays where it was dropped.
+  await act(ws, 'move-lane', { laneId: 2, parentLaneId: null, x: 500, y: 500 });
+  assert.deepEqual((await act(ws, 'tree')).lanes.map(l => [l.name, l.x, l.y]), [['Task 1', 500, 500], ['Task 2', 328, 24]]);
+});
+
+test('slug: from the name, unique per surface, rewritten on rename', async t => {
+  const ws = workspace(t);
+  const one = await act(ws, 'add-lane', { name: 'Task 1' });
+  const two = await act(ws, 'add-lane', { name: 'task 1!' });
+  const three = await act(ws, 'add-lane', { name: '   ' + 'Task 1' });
+  const other = await act(ws, 'add-lane', { surface: 'other', name: 'Task 1' });
+  const blank = await act(ws, 'add-lane', { name: '!!!' });
+  assert.deepEqual([one.slug, two.slug, three.slug, other.slug, blank.slug], ['task-1', 'task-1-2', 'task-1-3', 'task-1', 'lane']);
+  assert.equal((await act(ws, 'rename', { laneId: two.lane_id, name: 'Done, really' })).slug, 'done-really');
+  assert.equal((await act(ws, 'rename', { laneId: three.lane_id, name: 'task 1' })).slug, 'task-1-2', 'the freed suffix is reused');
+  assert.equal((await act(ws, 'rename', { laneId: one.lane_id, name: 'Task 1 ' })).slug, 'task-1', 'a lane keeps its own slug on rename');
+  const inner = await act(ws, 'add-lane', { name: 'done really', parentLaneId: one.lane_id });
+  assert.equal(inner.slug, 'done-really-2', 'unique across the surface, not only among siblings');
+});
+
+test('set-width persists on a top-level lane and is refused on a nested one', async t => {
+  const ws = workspace(t);
+  const top = await act(ws, 'add-lane', { name: 'top' });
+  const inner = await act(ws, 'add-lane', { name: 'inner', parentLaneId: top.lane_id });
+  assert.equal((await act(ws, 'set-width', { laneId: top.lane_id, w: 560 })).w, 560);
+  assert.equal((await act(ws, 'tree')).lanes[0].w, 560);
+  assert.equal((await act(ws, 'set-width', { laneId: top.lane_id, w: null })).w, null);
+  await assert.rejects(act(ws, 'set-width', { laneId: top.lane_id, w: 0 }), e => e.code === 'BOARD_BAD_INPUT');
+  await assert.rejects(act(ws, 'set-width', { laneId: inner.lane_id, w: 200 }), e => e.code === 'BOARD_BAD_INPUT' && /top-level/.test(e.message));
+});
+
 test('move-lane reparents; rename and set-orientation stick', async t => {
   const ws = workspace(t);
   const a = await act(ws, 'add-lane', { name: 'A' });
   const b = await act(ws, 'add-lane', { name: 'B' });
-  await act(ws, 'move-lane', { laneId: a.lane_id, toParentLaneId: b.lane_id, sortOrder: 20 });
+  await act(ws, 'move-lane', { laneId: a.lane_id, parentLaneId: b.lane_id, sortOrder: 20 });
   await act(ws, 'rename', { laneId: a.lane_id, name: 'A renamed' });
   await act(ws, 'set-orientation', { laneId: b.lane_id, orientation: 'horizontal' });
   const { lanes } = await act(ws, 'tree');
@@ -339,13 +436,13 @@ test('move-lane refuses a cycle; nesting stops at depth 3 on create and move', a
   const a = await act(ws, 'add-lane', { name: 'A' });
   const a1 = await act(ws, 'add-lane', { name: 'A1', parentLaneId: a.lane_id });
   const a2 = await act(ws, 'add-lane', { name: 'A2', parentLaneId: a1.lane_id });
-  await assert.rejects(act(ws, 'move-lane', { laneId: a.lane_id, toParentLaneId: a2.lane_id, sortOrder: 10 }), e => e.code === 'BOARD_CYCLE');
-  await assert.rejects(act(ws, 'move-lane', { laneId: a.lane_id, toParentLaneId: a.lane_id, sortOrder: 10 }), e => e.code === 'BOARD_CYCLE');
+  await assert.rejects(act(ws, 'move-lane', { laneId: a.lane_id, parentLaneId: a2.lane_id, sortOrder: 10 }), e => e.code === 'BOARD_CYCLE');
+  await assert.rejects(act(ws, 'move-lane', { laneId: a.lane_id, parentLaneId: a.lane_id, sortOrder: 10 }), e => e.code === 'BOARD_CYCLE');
   await assert.rejects(act(ws, 'add-lane', { name: 'A3', parentLaneId: a2.lane_id }), e => e.code === 'BOARD_DEPTH');
   const b = await act(ws, 'add-lane', { name: 'B' });
   const b1 = await act(ws, 'add-lane', { name: 'B1', parentLaneId: b.lane_id });
-  await assert.rejects(act(ws, 'move-lane', { laneId: a1.lane_id, toParentLaneId: b1.lane_id, sortOrder: 10 }), e => e.code === 'BOARD_DEPTH');
-  await act(ws, 'move-lane', { laneId: a2.lane_id, toParentLaneId: b1.lane_id, sortOrder: 10 });
+  await assert.rejects(act(ws, 'move-lane', { laneId: a1.lane_id, parentLaneId: b1.lane_id, sortOrder: 10 }), e => e.code === 'BOARD_DEPTH');
+  await act(ws, 'move-lane', { laneId: a2.lane_id, parentLaneId: b1.lane_id, sortOrder: 10 });
   const leaf = await act(ws, 'add-card', { laneId: a2.lane_id, kind: 'file', name: 'leaf.md' });
   assert.equal(leaf.ref, 'leaf.md');
   const { lanes } = await act(ws, 'tree');
@@ -453,7 +550,7 @@ test('agent surface may read the tree but never mutate', async t => {
     ['set-orientation', { laneId: a.lane_id, orientation: 'horizontal' }],
     ['update-card', { cardId: card.card_id, color: null, text: 'nope' }],
     ['move-card', { cardId: card.card_id, toLaneId: null, sortOrder: 5 }],
-    ['move-lane', { laneId: a.lane_id, toParentLaneId: null, sortOrder: 5 }],
+    ['move-lane', { laneId: a.lane_id, parentLaneId: null, sortOrder: 5 }],
     ['remove', { cardId: card.card_id }],
     ['save-to-project', { parent: 'projects', name: 'nope', model: { lanes: [], cards: [] } }]
   ];

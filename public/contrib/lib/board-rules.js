@@ -13,6 +13,10 @@ export const MAX_FIELDS = 4;
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 export const NAMED_ICONS = ['file', 'folder', 'note', 'link', 'image'];
 const ORIENTATIONS = ['horizontal', 'vertical'];
+// The canvas (ADR-043): a top-level lane sits at x, y in canvas pixels; a
+// lane without a position is placed to the right of the placed ones.
+export const LANE_GAP = 24;
+export const LANE_DEFAULT_W = 280;
 
 const IMAGE_EXT = { png: 'png', jpeg: 'jpg', jpg: 'jpg', gif: 'gif', webp: 'webp', 'svg+xml': 'svg', bmp: 'bmp', avif: 'avif' };
 
@@ -42,6 +46,61 @@ export function needLaneName(raw) {
 export function refuseDuplicateLane(name, siblings) {
   if (siblings.some(l => l.name === name)) throw fail('BOARD_BAD_INPUT', `A lane named ${name} is already here`);
   return name;
+}
+
+// The first line of a text as a slug: lowercase, runs of anything but a-z 0-9 become one dash.
+export function slugText(text) {
+  const first = String(text || '').trim().split(/\n/)[0];
+  return first.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+}
+
+// A lane's slug on its surface: the name's slug, then -2, -3 ... past the taken ones.
+export function laneSlug(name, taken) {
+  const base = slugText(name) || 'lane';
+  if (!taken.has(base)) return base;
+  let i = 2;
+  while (taken.has(`${base}-${i}`)) i++;
+  return `${base}-${i}`;
+}
+
+// A canvas coordinate or width: a whole number of pixels, never negative; null clears it.
+export function parseCoord(raw, what) {
+  if (raw == null || raw === '') return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) throw fail('BOARD_BAD_INPUT', `${what} is a number of pixels`);
+  return Math.round(n);
+}
+
+// Where a new top-level lane lands: right of every placed lane on the surface.
+export function nextSpot(placed) {
+  let right = 0;
+  for (const l of placed) if (l.x != null) right = Math.max(right, l.x + (l.w ?? LANE_DEFAULT_W));
+  return { x: right ? right + LANE_GAP : LANE_GAP, y: LANE_GAP };
+}
+
+// Rows from before the canvas: top-level lanes with no position take the
+// next spot in sort order, lanes with no slug take one. Returns the rows it
+// changed so a caller can write them once.
+export function settleLanes(lanes) {
+  const changed = new Set();
+  const ordered = [...lanes].sort((a, b) => a.sort_order - b.sort_order || a.lane_id - b.lane_id);
+  const bySurface = new Map();
+  for (const l of ordered) {
+    if (!bySurface.has(l.surface)) bySurface.set(l.surface, []);
+    bySurface.get(l.surface).push(l);
+  }
+  for (const rows of bySurface.values()) {
+    const taken = new Set(rows.map(l => l.slug).filter(Boolean));
+    for (const l of rows) {
+      if (l.x === undefined || l.y === undefined || l.w === undefined) { l.x ??= null; l.y ??= null; l.w ??= null; changed.add(l); }
+      if (!l.slug) { l.slug = laneSlug(l.name, taken); taken.add(l.slug); changed.add(l); }
+      if (l.parent_lane_id == null && l.x == null) {
+        Object.assign(l, nextSpot(rows.filter(r => r.parent_lane_id == null)));
+        changed.add(l);
+      }
+    }
+  }
+  return [...changed];
 }
 
 export function idOrNull(raw) {

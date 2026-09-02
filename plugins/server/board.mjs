@@ -1,6 +1,7 @@
 // Service: the planning board. A lane is a named container with an
 // orientation (vertical is serial order, horizontal is parallel work) and it
-// writes nothing to disk. A file card is a real file and a folder card is a
+// writes nothing to disk. A surface is a canvas (ADR-043): a top-level lane
+// sits at x, y with an optional width w, a nested lane flows in its parent. A file card is a real file and a folder card is a
 // real folder, both directly under the surface's folder. The surface is the
 // workspace-relative folder the board is showing, '' for the root. Rows live
 // in <root>/.research-ops/board.sqlite3. Path bytes go through the control
@@ -10,8 +11,9 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
   fail, needName, needLaneName, idOrNull, relPath, childRel,
-  parseColor, parseOrientation, parseFace, parseIcon, parseFields, parseWidth, defaultIcon, viewCard,
-  nextOrder, laneDepth, subtreeHeight, assertDepth, assertNoCycle, imageDataUrl, imageFileName, nestTree
+  parseColor, parseOrientation, parseFace, parseIcon, parseFields, parseWidth, parseCoord, defaultIcon, viewCard,
+  nextOrder, laneDepth, subtreeHeight, assertDepth, assertNoCycle, imageDataUrl, imageFileName, nestTree,
+  slugText, laneSlug, nextSpot, settleLanes
 } from '../../public/contrib/lib/board-rules.js';
 import { plugin as stickies } from './stickies.mjs';
 
@@ -23,7 +25,11 @@ const SCHEMA = `
     surface TEXT NOT NULL DEFAULT '',
     parent_lane_id INTEGER NULL REFERENCES board_lanes(lane_id) ON DELETE CASCADE,
     name TEXT NOT NULL,
+    slug TEXT NOT NULL DEFAULT '',
     orientation TEXT NOT NULL DEFAULT 'vertical' CHECK(orientation IN ('horizontal','vertical')),
+    x INTEGER,
+    y INTEGER,
+    w INTEGER,
     sort_order INTEGER NOT NULL DEFAULT 100,
     created_at TEXT NOT NULL
   );
@@ -97,10 +103,27 @@ function migrateRows(db, groups, cards) {
   }
 }
 
-// Boards from before the width column get it on open.
-function addWidthColumn(db) {
-  const cols = db.prepare('PRAGMA table_info(board_cards)').all().map(c => c.name);
-  if (!cols.includes('width')) db.exec('ALTER TABLE board_cards ADD COLUMN width INTEGER');
+// Columns added after a table shipped; a board from before one gets it on open.
+const LATER_COLUMNS = [
+  ['board_cards', 'width', 'INTEGER'],
+  ['board_lanes', 'slug', "TEXT NOT NULL DEFAULT ''"],
+  ['board_lanes', 'x', 'INTEGER'],
+  ['board_lanes', 'y', 'INTEGER'],
+  ['board_lanes', 'w', 'INTEGER']
+];
+
+function addLaterColumns(db) {
+  for (const [table, column, ddl] of LATER_COLUMNS) {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+    if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+  }
+}
+
+// Lanes from before the canvas get a position and a slug once, on open.
+function settleBoard(db) {
+  const changed = settleLanes(db.prepare('SELECT * FROM board_lanes').all());
+  const write = db.prepare('UPDATE board_lanes SET slug=?, x=?, y=? WHERE lane_id=?');
+  for (const l of changed) write.run(l.slug, l.x, l.y, l.lane_id);
 }
 
 function boardDb(rootPath) {
@@ -115,7 +138,8 @@ function boardDb(rootPath) {
   db.exec('PRAGMA foreign_keys=OFF');
   const legacy = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='board_groups'").get();
   if (legacy) migrateGroups(db);
-  else { db.exec(SCHEMA); addWidthColumn(db); }
+  else { db.exec(SCHEMA); addLaterColumns(db); }
+  settleBoard(db);
   db.exec('PRAGMA foreign_keys=ON');
   handles.set(root, db);
   return db;
@@ -182,15 +206,27 @@ function nextLaneOrder(db, surface, parentLaneId) {
     : topOrder(db, 'board_lanes', 'parent_lane_id=?', parentLaneId));
 }
 
-function insertLane(db, { surface, parentLaneId, name, orientation, now }) {
+const topLanes = (db, surface) => db.prepare('SELECT lane_id, x, w FROM board_lanes WHERE surface=? AND parent_lane_id IS NULL').all(surface);
+
+function slugOn(db, surface, name, exceptId = null) {
+  const taken = db.prepare('SELECT slug FROM board_lanes WHERE surface=? AND lane_id IS NOT ?').all(surface, exceptId);
+  return laneSlug(name, new Set(taken.map(r => r.slug)));
+}
+
+// A nested lane has no position; a top-level one without a given spot lands
+// right of the placed lanes.
+function insertLane(db, { surface, parentLaneId, name, orientation, x = null, y = null, w = null, now }) {
+  let spot = { x: null, y: null, w: null };
   if (parentLaneId != null) {
     laneOn(db, parentLaneId, surface);
     assertDepth(laneDepth(parentLaneId, parentOf(db)) + 1);
+  } else {
+    spot = x == null || y == null ? { ...nextSpot(topLanes(db, surface)), w } : { x, y, w };
   }
   const sortOrder = nextLaneOrder(db, surface, parentLaneId);
   const { lastInsertRowid } = db.prepare(
-    'INSERT INTO board_lanes (surface, parent_lane_id, name, orientation, sort_order, created_at) VALUES (?,?,?,?,?,?)'
-  ).run(surface, parentLaneId, name, orientation, sortOrder, now());
+    'INSERT INTO board_lanes (surface, parent_lane_id, name, slug, orientation, x, y, w, sort_order, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)'
+  ).run(surface, parentLaneId, name, slugOn(db, surface, name), orientation, spot.x, spot.y, spot.w, sortOrder, now());
   return mustLane(db, Number(lastInsertRowid));
 }
 
@@ -233,9 +269,7 @@ async function writeNewFile({ store, plugins, rootPath, rel, content }) {
 }
 
 function slugFile(text, ext) {
-  const first = String(text || '').trim().split(/\n/)[0];
-  const slug = first.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
-  return `${slug || 'note'}${ext}`;
+  return `${slugText(text) || 'note'}${ext}`;
 }
 
 function uniqueName(used, name) {
@@ -282,6 +316,9 @@ async function saveSketch(db, ctx, dest, model) {
       parentLaneId,
       name: needLaneName(l.name),
       orientation: l.orientation === 'horizontal' ? 'horizontal' : 'vertical',
+      x: parentLaneId == null ? parseCoord(l.x, 'x') : null,
+      y: parentLaneId == null ? parseCoord(l.y, 'y') : null,
+      w: parentLaneId == null ? parseWidth(l.w) : null,
       now: ctx.now
     });
     laneOf.set(id, row);
@@ -364,7 +401,11 @@ async function saveSketch(db, ctx, dest, model) {
   const outline = {};
   const laneOutline = lane => ({
     name: lane.name,
+    slug: lane.slug,
     orientation: lane.orientation,
+    x: lane.x,
+    y: lane.y,
+    w: lane.w,
     cards: lane.cards.map(c => c.ref),
     lanes: lane.lanes.map(laneOutline)
   });
@@ -391,7 +432,7 @@ export const plugin = {
   surface: 'main',
   category: 'planning',
   requiresWorkspace: true,
-  description: 'Planning board content: lanes (serial or parallel, no disk entry) and cards (files, folders, links, notes) per surface folder, stored per workspace in .research-ops/board.sqlite3. A file card is a real file and a folder card is a real folder.',
+  description: 'Planning board content: lanes (serial or parallel, no disk entry, placed on a canvas by x, y, w and addressed by slug) and cards (files, folders, links, notes) per surface folder, stored per workspace in .research-ops/board.sqlite3. A file card is a real file and a folder card is a real folder.',
   async action({ action, payload, surface: caller, store, plugins }) {
     // Whitelist, not per-action gates: any future mutation defaults to refused.
     if (caller === 'agent' && action !== 'tree') {
@@ -410,6 +451,9 @@ export const plugin = {
         parentLaneId: idOrNull(payload.parentLaneId),
         name: needLaneName(payload.name),
         orientation: payload.orientation == null ? 'vertical' : parseOrientation(payload.orientation),
+        x: parseCoord(payload.x, 'x'),
+        y: parseCoord(payload.y, 'y'),
+        w: parseWidth(payload.w),
         now
       });
     }
@@ -460,7 +504,15 @@ export const plugin = {
 
     if (action === 'rename') {
       const lane = mustLane(db, Number(payload.laneId));
-      db.prepare('UPDATE board_lanes SET name=? WHERE lane_id=?').run(needLaneName(payload.name), lane.lane_id);
+      const name = needLaneName(payload.name);
+      db.prepare('UPDATE board_lanes SET name=?, slug=? WHERE lane_id=?').run(name, slugOn(db, lane.surface, name, lane.lane_id), lane.lane_id);
+      return mustLane(db, lane.lane_id);
+    }
+
+    if (action === 'set-width') {
+      const lane = mustLane(db, Number(payload.laneId));
+      if (lane.parent_lane_id != null) throw fail('BOARD_BAD_INPUT', 'Only a top-level lane has a width; a nested lane flows in its parent');
+      db.prepare('UPDATE board_lanes SET w=? WHERE lane_id=?').run(parseWidth(payload.w), lane.lane_id);
       return mustLane(db, lane.lane_id);
     }
 
@@ -509,17 +561,28 @@ export const plugin = {
       return mustCard(db, card.card_id);
     }
 
+    // Into a parent: the lane flows there and drops its position. Onto the
+    // canvas: it sits at x, y (the payload's, else its own, else the next spot).
     if (action === 'move-lane') {
-      const sortOrder = Number(payload.sortOrder);
-      if (!Number.isFinite(sortOrder)) throw fail('BOARD_BAD_INPUT', 'Move needs a numeric sortOrder');
       const lane = mustLane(db, Number(payload.laneId));
-      const toParentId = idOrNull(payload.toParentLaneId);
+      const toParentId = idOrNull(payload.parentLaneId);
+      let spot = { x: null, y: null, w: null };
       if (toParentId != null) {
         laneOn(db, toParentId, lane.surface);
         assertNoCycle(lane.lane_id, toParentId, parentOf(db));
         assertDepth(laneDepth(toParentId, parentOf(db)) + subtreeHeight(lane.lane_id, childrenOf(db)));
+      } else {
+        const x = parseCoord(payload.x, 'x');
+        const y = parseCoord(payload.y, 'y');
+        spot = x != null && y != null ? { x, y, w: lane.w }
+          : lane.x != null ? { x: lane.x, y: lane.y, w: lane.w }
+            : { ...nextSpot(topLanes(db, lane.surface).filter(l => l.lane_id !== lane.lane_id)), w: lane.w };
       }
-      db.prepare('UPDATE board_lanes SET parent_lane_id=?, sort_order=? WHERE lane_id=?').run(toParentId, sortOrder, lane.lane_id);
+      const sortOrder = payload.sortOrder != null ? Number(payload.sortOrder)
+        : toParentId === lane.parent_lane_id ? lane.sort_order : nextLaneOrder(db, lane.surface, toParentId);
+      if (!Number.isFinite(sortOrder)) throw fail('BOARD_BAD_INPUT', 'Move needs a numeric sortOrder');
+      db.prepare('UPDATE board_lanes SET parent_lane_id=?, x=?, y=?, w=?, sort_order=? WHERE lane_id=?')
+        .run(toParentId, spot.x, spot.y, spot.w, sortOrder, lane.lane_id);
       return mustLane(db, lane.lane_id);
     }
 
