@@ -30,7 +30,7 @@ test('notes land in <root>/.research-ops/stickies.sqlite3 and round-trip', async
   assert.deepEqual(colors, STICKY_COLORS);
 });
 
-test('one note per path — set overwrites, empty text removes, remove removes', async t => {
+test('one note per path, set overwrites, empty text removes, remove removes', async t => {
   const root = workspace(t);
   await act(root, 'set', { path: 'docs', text: 'v1' });
   await act(root, 'set', { path: 'docs', text: 'v2', color: STICKY_COLORS[1] });

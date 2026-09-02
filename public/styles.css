@@ -53,8 +53,7 @@ body { margin: 0; background: var(--background); color: var(--text);
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   padding: var(--spacing); box-shadow: 0 8px 24px #0006; }
 .nav-drop.open > button { border-color: var(--accent); }
-.launch-chip.active { border-color: var(--accent); }
-.launch-chip.current { border-color: var(--accent); }
+.launch-chip.active, .launch-chip.current { border-color: var(--accent); }
 .board-frame-chrome { display: flex; justify-content: flex-end; margin-bottom: 6px; }
 
 /* ------------------------------------------------------------------ shell

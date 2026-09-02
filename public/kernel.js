@@ -1453,7 +1453,7 @@ function renderCustomize(tab = 'appearance') {
   if (tab === 'dashboard') {
     const links = mergedPrefs().links || [];
     pane.innerHTML = `
-      <div class="muted" style="margin-bottom:8px">The dashboard's content blocks are wired in Plugins. Extra program links for THIS workspace show on the no-workspace launchpad; the tool-health service reads them.</div>
+      <div class="muted" style="margin-bottom:8px">The dashboard's content blocks are wired in Plugins. Extra program links for THIS workspace feed the tool-health probe.</div>
       <div data-role="links"></div>
       <div class="pm-add"><input data-role="new-label" placeholder="label (e.g. Extraction app)">
         <input data-role="new-url" class="mono" placeholder="http://127.0.0.1:7860">

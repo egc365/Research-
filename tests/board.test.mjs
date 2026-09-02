@@ -116,7 +116,7 @@ test('nesting stops at depth 3. create and move both enforce it', async t => {
   assert.equal(groups[1].groups[0].groups[0].title, 'A2');
 });
 
-test('a pre-existing deeper tree still renders — the cap gates mutations only', async t => {
+test('a pre-existing deeper tree still renders, the cap gates mutations only', async t => {
   const ws = workspace(t);
   const a = await act(ws, 'add-card', { kind: 'folder', name: 'A' });
   const a1 = await act(ws, 'add-card', { kind: 'folder', groupId: a.group_id, name: 'A1' });
