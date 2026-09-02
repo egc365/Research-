@@ -1,5 +1,5 @@
 // The board service: groups/subgroups/cards as CONTENT in the workspace's own
-// board.sqlite3 — never in control.sqlite3. File and folder creates go through
+// board.sqlite3. Never in control.sqlite3. File and folder creates go through
 // the control store's guarded write so the card is the document.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -25,16 +25,17 @@ function act(ws, action, payload = {}, surface = 'owner') {
 
 test('content lands in <root>/.research-ops/board.sqlite3, not control.sqlite3', async t => {
   const ws = workspace(t);
-  await act(ws, 'add-group', { title: 'Pipeline' });
+  await act(ws, 'add-card', { kind: 'folder', name: 'Pipeline' });
   assert.equal(fs.existsSync(path.join(ws.root, '.research-ops', 'board.sqlite3')), true);
   assert.equal(fs.existsSync(path.join(ws.root, '.research-ops', 'control.sqlite3')), false);
 });
 
 test('tree nests groups/subgroups/cards ordered by sort_order', async t => {
   const ws = workspace(t);
-  const a = await act(ws, 'add-group', { title: 'A', orientation: 'horizontal' });
-  const b = await act(ws, 'add-group', { title: 'B' });
-  const a1 = await act(ws, 'add-group', { parentId: a.group_id, title: 'A1' });
+  const a = await act(ws, 'add-card', { kind: 'folder', name: 'A' });
+  await act(ws, 'set-orientation', { groupId: a.group_id, orientation: 'horizontal' });
+  const b = await act(ws, 'add-card', { kind: 'folder', name: 'B' });
+  const a1 = await act(ws, 'add-card', { kind: 'folder', groupId: a.group_id, name: 'A1' });
   await act(ws, 'add-card', { groupId: a1.group_id, kind: 'note', ref: 'first note' });
   await act(ws, 'add-card', { groupId: a1.group_id, kind: 'file', name: 'plan.md', title: 'Plan' });
   const { groups } = await act(ws, 'tree');
@@ -53,8 +54,8 @@ test('tree nests groups/subgroups/cards ordered by sort_order', async t => {
 
 test('move reparents a card and a group; rename and set-orientation stick', async t => {
   const ws = workspace(t);
-  const a = await act(ws, 'add-group', { title: 'A' });
-  const b = await act(ws, 'add-group', { title: 'B' });
+  const a = await act(ws, 'add-card', { kind: 'folder', name: 'A' });
+  const b = await act(ws, 'add-card', { kind: 'folder', name: 'B' });
   const card = await act(ws, 'add-card', { groupId: a.group_id, kind: 'link', ref: 'http://127.0.0.1:8787' });
   await act(ws, 'move', { cardId: card.card_id, toGroupId: b.group_id, sortOrder: 10 });
   await act(ws, 'move', { groupId: a.group_id, toParentId: b.group_id, sortOrder: 20 });
@@ -70,19 +71,19 @@ test('move reparents a card and a group; rename and set-orientation stick', asyn
 
 test('move refuses to put a group under its own descendant', async t => {
   const ws = workspace(t);
-  const a = await act(ws, 'add-group', { title: 'A' });
-  const a1 = await act(ws, 'add-group', { parentId: a.group_id, title: 'A1' });
-  const a2 = await act(ws, 'add-group', { parentId: a1.group_id, title: 'A2' });
+  const a = await act(ws, 'add-card', { kind: 'folder', name: 'A' });
+  const a1 = await act(ws, 'add-card', { kind: 'folder', groupId: a.group_id, name: 'A1' });
+  const a2 = await act(ws, 'add-card', { kind: 'folder', groupId: a1.group_id, name: 'A2' });
   await assert.rejects(act(ws, 'move', { groupId: a.group_id, toParentId: a2.group_id, sortOrder: 10 }), /descendant/);
   await assert.rejects(act(ws, 'move', { groupId: a.group_id, toParentId: a.group_id, sortOrder: 10 }), /descendant|itself/);
 });
 
 test('remove cascades to subgroups and cards', async t => {
   const ws = workspace(t);
-  const a = await act(ws, 'add-group', { title: 'A' });
-  const a1 = await act(ws, 'add-group', { parentId: a.group_id, title: 'A1' });
+  const a = await act(ws, 'add-card', { kind: 'folder', name: 'A' });
+  const a1 = await act(ws, 'add-card', { kind: 'folder', groupId: a.group_id, name: 'A1' });
   await act(ws, 'add-card', { groupId: a1.group_id, kind: 'note', ref: 'doomed' });
-  await act(ws, 'add-group', { title: 'B' });
+  await act(ws, 'add-card', { kind: 'folder', name: 'B' });
   await act(ws, 'remove', { groupId: a.group_id });
   const { groups } = await act(ws, 'tree');
   assert.deepEqual(groups.map(g => g.title), ['B']);
@@ -90,20 +91,20 @@ test('remove cascades to subgroups and cards', async t => {
   assert.equal(groups[0].cards.length, 0);
 });
 
-test('nesting stops at depth 3 — add-group and move both enforce it', async t => {
+test('nesting stops at depth 3. create and move both enforce it', async t => {
   const ws = workspace(t);
-  const a = await act(ws, 'add-group', { title: 'A' });
-  const a1 = await act(ws, 'add-group', { parentId: a.group_id, title: 'A1' });
-  const a2 = await act(ws, 'add-group', { parentId: a1.group_id, title: 'A2' });
+  const a = await act(ws, 'add-card', { kind: 'folder', name: 'A' });
+  const a1 = await act(ws, 'add-card', { kind: 'folder', groupId: a.group_id, name: 'A1' });
+  const a2 = await act(ws, 'add-card', { kind: 'folder', groupId: a1.group_id, name: 'A2' });
   // Depth 4 by creation is refused.
   await assert.rejects(
-    act(ws, 'add-group', { parentId: a2.group_id, title: 'A3' }),
+    act(ws, 'add-card', { kind: 'folder', groupId: a2.group_id, name: 'A3' }),
     error => error.code === 'BOARD_DEPTH'
   );
   // Depth 4 by moving a subtree is refused: A1 (height 2, holds A2) under A2's
   // sibling at depth 2 would land A2's copy at depth 4.
-  const b = await act(ws, 'add-group', { title: 'B' });
-  const b1 = await act(ws, 'add-group', { parentId: b.group_id, title: 'B1' });
+  const b = await act(ws, 'add-card', { kind: 'folder', name: 'B' });
+  const b1 = await act(ws, 'add-card', { kind: 'folder', groupId: b.group_id, name: 'B1' });
   await assert.rejects(
     act(ws, 'move', { groupId: a1.group_id, toParentId: b1.group_id, sortOrder: 10 }),
     error => error.code === 'BOARD_DEPTH'
@@ -117,9 +118,9 @@ test('nesting stops at depth 3 — add-group and move both enforce it', async t 
 
 test('a pre-existing deeper tree still renders — the cap gates mutations only', async t => {
   const ws = workspace(t);
-  const a = await act(ws, 'add-group', { title: 'A' });
-  const a1 = await act(ws, 'add-group', { parentId: a.group_id, title: 'A1' });
-  const a2 = await act(ws, 'add-group', { parentId: a1.group_id, title: 'A2' });
+  const a = await act(ws, 'add-card', { kind: 'folder', name: 'A' });
+  const a1 = await act(ws, 'add-card', { kind: 'folder', groupId: a.group_id, name: 'A1' });
+  const a2 = await act(ws, 'add-card', { kind: 'folder', groupId: a1.group_id, name: 'A2' });
   // Simulate a board written before the cap existed.
   const { DatabaseSync } = await import('node:sqlite');
   const db = new DatabaseSync(path.join(ws.root, '.research-ops', 'board.sqlite3'));
@@ -155,7 +156,7 @@ test('sticky colors: column added to pre-existing boards, update-card validates 
 
 test('color round-trips on file, link, and note cards', async t => {
   const ws = workspace(t);
-  const g = await act(ws, 'add-group', { title: 'G' });
+  const g = await act(ws, 'add-card', { kind: 'folder', name: 'G' });
   const { STICKY_COLORS } = await import('../plugins/server/stickies.mjs');
   const file = await act(ws, 'add-card', { groupId: g.group_id, kind: 'file', name: 'plan.md', color: STICKY_COLORS[1] });
   const link = await act(ws, 'add-card', { groupId: g.group_id, kind: 'link', ref: 'http://127.0.0.1:9', color: STICKY_COLORS[2] });
@@ -182,7 +183,7 @@ test('color round-trips on file, link, and note cards', async t => {
 
 test('set-orientation writes the group row; a later tree read returns it', async t => {
   const ws = workspace(t);
-  const g = await act(ws, 'add-group', { title: 'plans' });
+  const g = await act(ws, 'add-card', { kind: 'folder', name: 'plans' });
   assert.equal(g.orientation, 'vertical');
   const flipped = await act(ws, 'set-orientation', { groupId: g.group_id, orientation: 'horizontal' });
   assert.equal(flipped.orientation, 'horizontal');
@@ -199,7 +200,7 @@ test('set-orientation writes the group row; a later tree read returns it', async
 
 test('update-card writes color and text in one call', async t => {
   const ws = workspace(t);
-  const g = await act(ws, 'add-group', { title: 'G' });
+  const g = await act(ws, 'add-card', { kind: 'folder', name: 'G' });
   const { STICKY_COLORS } = await import('../plugins/server/stickies.mjs');
   const note = await act(ws, 'add-card', { groupId: g.group_id, kind: 'note', ref: 'old' });
   const link = await act(ws, 'add-card', { groupId: g.group_id, kind: 'link', ref: 'http://127.0.0.1:9', title: 'old' });
@@ -221,12 +222,12 @@ test('update-card writes color and text in one call', async t => {
 
 test('agent surface may read the tree but never mutate', async t => {
   const ws = workspace(t);
-  const a = await act(ws, 'add-group', { title: 'A' });
+  const a = await act(ws, 'add-card', { kind: 'folder', name: 'A' });
   const card = await act(ws, 'add-card', { groupId: a.group_id, kind: 'note', ref: 'owner note' });
   const { groups } = await act(ws, 'tree', {}, 'agent');
   assert.equal(groups.length, 1);
   const mutations = [
-    ['add-group', { title: 'nope' }],
+    ['add-card', { kind: 'folder', name: 'nope' }],
     ['add-card', { groupId: a.group_id, kind: 'note', ref: 'nope' }],
     ['rename', { groupId: a.group_id, title: 'nope' }],
     ['set-orientation', { groupId: a.group_id, orientation: 'horizontal' }],
@@ -293,7 +294,7 @@ test('outside-root refused', async t => {
   const plans = await act(ws, 'add-card', { kind: 'folder', name: 'plans' });
   await assert.rejects(
     act(ws, 'add-card', { kind: 'file', groupId: plans.group_id, name: '../../outside.md' }),
-    error => /outside workspace/i.test(error.message)
+    error => error.code === 'BOARD_BAD_INPUT' && /one path segment/.test(error.message)
   );
   assert.equal(fs.existsSync('/tmp/outside.md'), false);
 });
@@ -325,8 +326,8 @@ test('remove drops the board row and leaves the disk alone', async t => {
 
 test('re-creating a group by name adopts the folder left on disk', async t => {
   const ws = workspace(t);
-  const parent = await act(ws, 'add-group', { title: 'plans' });
-  const q3 = await act(ws, 'add-group', { parentId: parent.group_id, title: 'q3' });
+  const parent = await act(ws, 'add-card', { kind: 'folder', name: 'plans' });
+  const q3 = await act(ws, 'add-card', { kind: 'folder', groupId: parent.group_id, name: 'q3' });
   await act(ws, 'add-card', { kind: 'file', groupId: q3.group_id, name: 'notes.md', body: 'stay' });
   const folder = path.join(ws.root, 'plans', 'q3');
   const notes = path.join(folder, 'notes.md');
@@ -336,7 +337,7 @@ test('re-creating a group by name adopts the folder left on disk', async t => {
   await act(ws, 'remove', { groupId: q3.group_id });
   assert.equal(fs.statSync(folder).isDirectory(), true);
   assert.equal(fs.readFileSync(notes, 'utf8'), 'stay\n');
-  const again = await act(ws, 'add-group', { parentId: parent.group_id, title: 'q3' });
+  const again = await act(ws, 'add-card', { kind: 'folder', groupId: parent.group_id, name: 'q3' });
   assert.equal(again.folder_path, 'plans/q3');
   assert.equal(again.title, 'q3');
   assert.equal(fs.readFileSync(notes, 'utf8'), beforeBody);
@@ -366,4 +367,63 @@ test('unbound group from before folder_path still renders and bind-group writes 
   const bound = await act(ws, 'bind-group', { groupId: groups[0].group_id });
   assert.equal(bound.folder_path, 'legacy');
   assert.equal(fs.statSync(path.join(ws.root, 'legacy')).isDirectory(), true);
+});
+
+test('legacy board accepts a root file card and a root note', async t => {
+  const ws = workspace(t);
+  const { DatabaseSync } = await import('node:sqlite');
+  fs.mkdirSync(path.join(ws.root, '.research-ops'), { recursive: true });
+  const old = new DatabaseSync(path.join(ws.root, '.research-ops', 'board.sqlite3'));
+  old.exec(`
+    CREATE TABLE board_groups (group_id INTEGER PRIMARY KEY, parent_id INTEGER NULL, title TEXT NOT NULL,
+      orientation TEXT NOT NULL DEFAULT 'vertical', sort_order INTEGER NOT NULL DEFAULT 100, created_at TEXT NOT NULL);
+    CREATE TABLE board_cards (card_id INTEGER PRIMARY KEY, group_id INTEGER NOT NULL, kind TEXT NOT NULL,
+      ref TEXT NOT NULL, title TEXT, sort_order INTEGER NOT NULL DEFAULT 100, created_at TEXT NOT NULL);
+  `);
+  const before = old.prepare('PRAGMA table_info(board_cards)').all().find(c => c.name === 'group_id');
+  assert.equal(before.notnull, 1);
+  old.close();
+  const file = await act(ws, 'add-card', { kind: 'file', groupId: null, name: 'README.md', body: 'root' });
+  assert.equal(file.group_id, null);
+  assert.equal(file.ref, 'README.md');
+  assert.equal(fs.readFileSync(path.join(ws.root, 'README.md'), 'utf8'), 'root\n');
+  const note = await act(ws, 'add-card', { kind: 'note', groupId: null, ref: 'a thought' });
+  assert.equal(note.group_id, null);
+  assert.equal(note.ref, 'a thought');
+  const check = new DatabaseSync(path.join(ws.root, '.research-ops', 'board.sqlite3'));
+  const after = check.prepare('PRAGMA table_info(board_cards)').all().find(c => c.name === 'group_id');
+  check.close();
+  assert.equal(after.notnull, 0);
+});
+
+test('needName refuses a name that is not one path segment', async t => {
+  const ws = workspace(t);
+  const plans = await act(ws, 'add-card', { kind: 'folder', name: 'plans' });
+  for (const name of ['../esc', '/tmp/x', 'a/b', '.']) {
+    await assert.rejects(
+      act(ws, 'add-card', { kind: 'folder', groupId: plans.group_id, name }),
+      error => error.code === 'BOARD_BAD_INPUT' && /one path segment/.test(error.message)
+    );
+    await assert.rejects(
+      act(ws, 'add-card', { kind: 'file', groupId: plans.group_id, name }),
+      error => error.code === 'BOARD_BAD_INPUT' && /one path segment/.test(error.message)
+    );
+  }
+});
+
+test('renaming a bound group moves the folder', async t => {
+  const ws = workspace(t);
+  const plans = await act(ws, 'add-card', { kind: 'folder', name: 'plans' });
+  await act(ws, 'add-card', { kind: 'file', groupId: plans.group_id, name: 'README.md', body: 'stay' });
+  await act(ws, 'add-card', { kind: 'folder', groupId: plans.group_id, name: 'q3' });
+  const renamed = await act(ws, 'rename', { groupId: plans.group_id, title: 'plans-2' });
+  assert.equal(renamed.title, 'plans-2');
+  assert.equal(renamed.folder_path, 'plans-2');
+  assert.equal(fs.existsSync(path.join(ws.root, 'plans')), false);
+  assert.equal(fs.statSync(path.join(ws.root, 'plans-2')).isDirectory(), true);
+  assert.equal(fs.readFileSync(path.join(ws.root, 'plans-2', 'README.md'), 'utf8'), 'stay\n');
+  const { groups } = await act(ws, 'tree');
+  assert.equal(groups[0].folder_path, 'plans-2');
+  assert.equal(groups[0].groups[0].folder_path, 'plans-2/q3');
+  assert.equal(groups[0].cards.find(c => c.kind === 'file').ref, 'plans-2/README.md');
 });

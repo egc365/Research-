@@ -41,10 +41,33 @@ function boardDb(rootPath) {
     );
   `);
   // Boards written before sticky colors or folder_path existed lack the columns.
-  const cardColumns = db.prepare('PRAGMA table_info(board_cards)').all().map(c => c.name);
-  if (!cardColumns.includes('color')) db.exec('ALTER TABLE board_cards ADD COLUMN color TEXT');
-  const groupColumns = db.prepare('PRAGMA table_info(board_groups)').all().map(c => c.name);
-  if (!groupColumns.includes('folder_path')) db.exec('ALTER TABLE board_groups ADD COLUMN folder_path TEXT');
+  const cardColumns = db.prepare('PRAGMA table_info(board_cards)').all();
+  if (!cardColumns.some(c => c.name === 'color')) db.exec('ALTER TABLE board_cards ADD COLUMN color TEXT');
+  const groupColumns = db.prepare('PRAGMA table_info(board_groups)').all();
+  if (!groupColumns.some(c => c.name === 'folder_path')) db.exec('ALTER TABLE board_groups ADD COLUMN folder_path TEXT');
+  // Boards written when group_id was NOT NULL refuse a root file or note.
+  // CREATE TABLE IF NOT EXISTS does not rebuild; copy into a nullable table.
+  const groupIdCol = db.prepare('PRAGMA table_info(board_cards)').all().find(c => c.name === 'group_id');
+  if (groupIdCol && groupIdCol.notnull) {
+    db.exec(`
+      PRAGMA foreign_keys=OFF;
+      CREATE TABLE board_cards_new (
+        card_id INTEGER PRIMARY KEY,
+        group_id INTEGER NULL REFERENCES board_groups(group_id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK(kind IN ('file','link','note')),
+        ref TEXT NOT NULL,
+        title TEXT,
+        color TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 100,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO board_cards_new (card_id, group_id, kind, ref, title, color, sort_order, created_at)
+        SELECT card_id, group_id, kind, ref, title, color, sort_order, created_at FROM board_cards;
+      DROP TABLE board_cards;
+      ALTER TABLE board_cards_new RENAME TO board_cards;
+      PRAGMA foreign_keys=ON;
+    `);
+  }
   handles.set(root, db);
   return db;
 }
@@ -72,9 +95,12 @@ function mustStore(store) {
   return store;
 }
 
-function needName(payload) {
-  const name = String(payload.name || '').trim();
+function needName(raw) {
+  const name = String(raw || '').trim();
   if (!name) throw fail('BOARD_BAD_INPUT', 'A name is required');
+  if (name === '.' || name === '..' || /[\\/]/.test(name)) {
+    throw fail('BOARD_BAD_INPUT', 'A name is one path segment');
+  }
   return name;
 }
 
@@ -203,18 +229,10 @@ export const plugin = {
 
     if (action === 'tree') return tree(db);
 
-    if (action === 'add-group') {
-      const title = String(payload.title || '').trim();
-      if (!title) throw fail('BOARD_BAD_INPUT', 'A group needs a title');
-      const parentId = payload.parentId == null ? null : Number(payload.parentId);
-      const orientation = payload.orientation || 'vertical';
-      return createBoundGroup(db, { store, rootPath, parentId, title, orientation, now });
-    }
-
     if (action === 'add-card') {
       const kind = String(payload.kind || '');
       if (kind === 'folder') {
-        const name = needName(payload);
+        const name = needName(payload.name);
         const parentId = payload.groupId == null || payload.groupId === '' ? null : Number(payload.groupId);
         return createBoundGroup(db, { store, rootPath, parentId, title: name, orientation: 'vertical', now });
       }
@@ -231,7 +249,7 @@ export const plugin = {
       let ref;
       let title = payload.title == null ? null : String(payload.title);
       if (kind === 'file') {
-        const name = needName(payload);
+        const name = needName(payload.name);
         const parent = parentFolder(db, groupId);
         const rel = childRel(parent.folder_path, name);
         const body = payload.body == null ? '' : String(payload.body);
@@ -256,18 +274,37 @@ export const plugin = {
       if (group.parent_id != null && !parent.folder_path) {
         throw fail('BOARD_UNBOUND', `Bind group ${group.parent_id} to a folder first`);
       }
-      const folder_path = childRel(parent.folder_path, group.title);
+      const title = needName(group.title);
+      const folder_path = childRel(parent.folder_path, title);
       ensureFolder(store, rootPath, folder_path);
       db.prepare('UPDATE board_groups SET folder_path=? WHERE group_id=?').run(folder_path, group.group_id);
       return mustGroup(db, group.group_id);
     }
 
     if (action === 'rename') {
-      const title = String(payload.title || '').trim();
-      if (!title) throw fail('BOARD_BAD_INPUT', 'Rename needs a title');
-      mustGroup(db, Number(payload.groupId));
-      db.prepare('UPDATE board_groups SET title=? WHERE group_id=?').run(title, Number(payload.groupId));
-      return mustGroup(db, Number(payload.groupId));
+      const title = needName(payload.title);
+      const group = mustGroup(db, Number(payload.groupId));
+      if (!group.folder_path) {
+        db.prepare('UPDATE board_groups SET title=? WHERE group_id=?').run(title, group.group_id);
+        return mustGroup(db, group.group_id);
+      }
+      if (title === group.title) return group;
+      const parent = parentFolder(db, group.parent_id);
+      const fromRel = group.folder_path;
+      const toRel = childRel(parent.folder_path, title);
+      mustStore(store).moveEntry({
+        rootPath,
+        fromPath: absIn(rootPath, fromRel),
+        toPath: absIn(rootPath, toRel),
+        actor: 'human'
+      });
+      db.prepare('UPDATE board_groups SET title=?, folder_path=? WHERE group_id=?')
+        .run(title, toRel, group.group_id);
+      db.prepare(`UPDATE board_groups SET folder_path=? || substr(folder_path, length(?)+1) WHERE folder_path LIKE ? || '/%'`)
+        .run(toRel, fromRel, fromRel);
+      db.prepare(`UPDATE board_cards SET ref=? || substr(ref, length(?)+1) WHERE kind='file' AND (ref=? OR ref LIKE ? || '/%')`)
+        .run(toRel, fromRel, fromRel, fromRel);
+      return mustGroup(db, group.group_id);
     }
 
     if (action === 'update-card') {
