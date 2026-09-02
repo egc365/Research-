@@ -11,89 +11,86 @@
 //
 // Layouts the kernel knows: 'main', 'rail-main', 'main-side', 'rail-main-side'.
 
+// Stations carry a `category` — the nav bar's functional delineation (owner
+// rule 2026-09-02: plugins grouped by function, not a flat board of tabs).
+// Plan = arranging work, Curate = the interrelated revision/validation/review
+// family, Monitor = read-only windows onto running machinery.
 export const stations = [
   {
-    id: 'file-workbench', label: 'File workbench', version: '1.1.0',
+    id: 'revision-center', label: 'Revision center', version: '1.2.0',
     manifest: {
-      description: 'Edit the selected file, watch its lifecycle state and provenance. Navigation lives in the sidebar.',
-      layout: 'main-side', slots: ['main', 'side'], icon: '🗂'
+      description: 'Preserved vs new side by side, block cards from the transcript index, amendments as append-only revisions, accept / needs-more-work. Also the place to edit a file — File workbench folded in here.',
+      layout: 'main-side', slots: ['main', 'side'], icon: '📝', category: 'Curate'
     }
   },
   {
-    id: 'revision-center', label: 'Revision center', version: '1.1.0',
-    manifest: {
-      description: 'Preserved vs new side by side, block cards from the transcript index, amendments as append-only revisions, accept / needs-more-work.',
-      layout: 'main-side', slots: ['main', 'side'], icon: '📝'
-    }
-  },
-  {
-    id: 'validation-center', label: 'Validation center', version: '1.0.0',
+    id: 'validation-center', label: 'Validation center', version: '1.1.0',
     manifest: {
       description: 'Review candidates and validated artifacts: queue of cards, base vs candidate side by side, shared diff, receipts and provenance. Promote is the single final verb — validated bytes to promoted authority, human-only.',
-      layout: 'rail-main-side', slots: ['rail', 'main', 'side'], icon: '✅'
+      layout: 'rail-main-side', slots: ['rail', 'main', 'side'], icon: '✅', category: 'Curate'
     }
   },
   {
-    id: 'dashboard-viewer', label: 'Dashboard', version: '1.0.0',
+    id: 'dashboard-viewer', label: 'Dashboard', version: '1.1.0',
     manifest: {
-      description: 'Workspace counts and recent activity, computed from the ledger.',
-      layout: 'main', slots: ['main'], icon: '📊'
+      description: 'Workspace counts and recent activity, computed from the ledger — with the planning board mounted where the work starts.',
+      layout: 'main', slots: ['main'], icon: '📊', category: 'Plan'
     }
   },
   {
-    id: 'provenance-viewer', label: 'Provenance', version: '1.1.0',
+    id: 'provenance-viewer', label: 'Provenance', version: '1.2.0',
     manifest: {
       description: 'Who wrote what, when, under which run — the full event ledger for a file, filterable by actor.',
-      layout: 'main-side', slots: ['main', 'side'], icon: '🔗'
+      layout: 'main-side', slots: ['main', 'side'], icon: '🔗', category: 'Curate'
     }
   },
   {
-    id: 'execution-state', label: 'Execution state', version: '1.0.0',
+    id: 'execution-state', label: 'Execution state', version: '1.1.0',
     manifest: {
       description: 'The small structured memory an agent run keeps (SKILL.state): inspect a run, apply a patch, watch the version counter.',
-      layout: 'main', slots: ['main'], icon: '⚙'
+      layout: 'main', slots: ['main'], icon: '⚙', category: 'Monitor'
     }
   },
   {
-    id: 'health-monitor', label: 'Tool health', version: '1.0.0',
+    id: 'health-monitor', label: 'Tool health', version: '1.1.0',
     manifest: {
       description: 'Up/down and latency for the machine’s tool ports — the launchpad’s program list plus this workspace’s links, probed from the server (loopback only).',
-      layout: 'main', slots: ['main'], icon: '🩺'
+      layout: 'main', slots: ['main'], icon: '🩺', category: 'Monitor'
     }
   },
   {
-    id: 'transcript-review', label: 'Transcript review', version: '1.0.0',
+    id: 'transcript-review', label: 'Transcript review', version: '1.1.0',
     manifest: {
       description: 'Deep search over every bot’s native session transcripts — pick a bot, optionally a session, filter by text, role, kind, date. Read-only; provider logs stay authoritative.',
-      layout: 'main', slots: ['main'], icon: '🎞'
+      layout: 'main', slots: ['main'], icon: '🎞', category: 'Curate'
     }
   },
   {
-    id: 'planning-board', label: 'Board', version: '1.0.0',
+    id: 'planning-board', label: 'Board', version: '1.1.0',
     manifest: {
       description: 'Groups and subgroups of cards that are real files, links and notes — horizontal for hierarchy, vertical for serial order; drill in, drag to arrange. Card workshop unwound.',
-      layout: 'main', slots: ['main'], icon: '🗂'
+      layout: 'main', slots: ['main'], icon: '🗂', category: 'Plan'
     }
   },
   {
-    id: 'gpu-monitor', label: 'GPU governor', version: '1.0.0',
+    id: 'gpu-monitor', label: 'GPU governor', version: '1.1.0',
     manifest: {
       description: 'Read-only window onto the gpu-governor daemon: current GPU snapshot, allowlist rules (new config path first, legacy fallback), and the tail of the enforcement event log. Enforcement verbs stay on the :7890 dashboard.',
-      layout: 'main', slots: ['main'], icon: '🎛'
+      layout: 'main', slots: ['main'], icon: '🎛', category: 'Monitor'
     }
   },
   {
-    id: 'stt-monitor', label: 'Parakeet STT', version: '1.0.0',
+    id: 'stt-monitor', label: 'Parakeet STT', version: '1.1.0',
     manifest: {
       description: 'Status of the local Parakeet speech-to-text service — up/down, model and config summary, raw status — with owner-only start/stop of listen mode.',
-      layout: 'main', slots: ['main'], icon: '🎙'
+      layout: 'main', slots: ['main'], icon: '🎙', category: 'Monitor'
     }
   },
   {
-    id: 'project-creator', label: 'Project creator', version: '1.0.0',
+    id: 'project-creator', label: 'Project creator', version: '1.1.0',
     manifest: {
       description: 'Start a new project folder inside the workspace with a seeded README, registered in the ledger from its first byte.',
-      layout: 'main', slots: ['main'], icon: '✚'
+      layout: 'main', slots: ['main'], icon: '✚', category: 'Plan'
     }
   }
 ];
@@ -134,10 +131,6 @@ export const contributions = [
 // Default wiring, applied only when a station has zero rows in
 // station_contributions. Order inside a slot = sort_order steps of 10.
 export const defaultWiring = {
-  'file-workbench': {
-    main: ['markdown-editor', 'diff-renderer'],
-    side: ['state-badge', 'provenance-block', 'revision-timeline']
-  },
   'revision-center': {
     main: ['dual-document-view'],
     side: [{ id: 'card-rail', config: { source: 'transcript' } }, 'amendment-editor', 'decision-controls', 'revision-timeline']
@@ -150,12 +143,12 @@ export const defaultWiring = {
       'validation-result'
     ],
     side: [
-      { id: 'state-badge', config: { openIn: ['revision-center', 'file-workbench'] } },
+      { id: 'state-badge', config: { openIn: ['revision-center'] } },
       'provenance-block',
       'promotion-control'
     ]
   },
-  'dashboard-viewer': { main: ['launchpad', 'folder-cards', 'inbox', 'statistics-view'] },
+  'dashboard-viewer': { main: ['launchpad', 'board-view', 'folder-cards', 'inbox', 'statistics-view'] },
   'provenance-viewer': {
     main: ['revision-timeline'],
     side: ['actor-filter', 'provenance-block']
@@ -172,7 +165,15 @@ export const defaultWiring = {
 // Ids the catalog used to ship and no longer does. Boot deletes their rows from
 // all three composition tables (ui_plugins, workspace_plugins,
 // station_contributions) so the plugin manager shows no ghosts.
-export const retired = ['label-designator', 'governance-center'];
+export const retired = ['label-designator', 'governance-center', 'file-workbench'];
+
+// One-shot wiring additions for stations that already have owner rows (the
+// seeder deliberately skips those). Each id is applied at most once ever —
+// recorded in app_meta — so an owner who later unwires the contribution is
+// never fought with.
+export const wiringAdditions = [
+  { id: '20260902-board-on-dashboard', stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'board-view', sortOrder: 15 }
+];
 
 // Default sidebar sections for a workspace with no sidebar_sections rows yet.
 // Sections are ordinary contributions (section-*) mounted by the kernel's

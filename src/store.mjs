@@ -495,6 +495,25 @@ export class ControlStore {
     }
   }
 
+  // Wiring additions for stations whose rows already exist (the seeder skips
+  // those). Each addition id runs at most once ever — recorded in app_meta —
+  // so an owner who later unwires the contribution is never fought with.
+  applyWiringAdditions(additions = []) {
+    const seen = this.db.prepare('SELECT value FROM app_meta WHERE key=?');
+    const mark = this.db.prepare('INSERT OR REPLACE INTO app_meta(key,value) VALUES(?,?)');
+    const insert = this.db.prepare(`
+      INSERT OR IGNORE INTO station_contributions(station_id,slot_name,contribution_id,sort_order,config_json,enabled)
+      VALUES(?,?,?,?,?,1)
+    `);
+    for (const add of additions) {
+      const key = `wiring-addition:${add.id}`;
+      if (seen.get(key)) continue;
+      insert.run(add.stationId, add.slotName, add.contributionId, add.sortOrder ?? 100,
+        add.config ? JSON.stringify(add.config) : null);
+      mark.run(key, new Date().toISOString());
+    }
+  }
+
   // An owner-defined station: a ui_plugins row like any shipped station, so
   // the kernel renders it and the plugin manager wires it — domain-specific
   // behavior arrives by choosing contributions, not by writing a component.

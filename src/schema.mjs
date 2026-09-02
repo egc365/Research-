@@ -89,6 +89,11 @@ CREATE TABLE IF NOT EXISTS workspace_plugins (
   PRIMARY KEY(workspace_root, plugin_id)
 );
 
+CREATE TABLE IF NOT EXISTS app_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS station_contributions (
   station_id TEXT NOT NULL,
   slot_name TEXT NOT NULL,

@@ -17,7 +17,10 @@ export function mount(el, ctx) {
     const f = ctx.selection;
     if (!f) { el.innerHTML = '<div class="empty">Select a file to see its state.</div>'; return; }
     const state = f.artifact?.state || 'working';
-    const openIn = ctx.config.openIn || [];
+    // Old wiring configs may still name retired stations (file-workbench);
+    // offer only stations that exist and are enabled.
+    const enabled = ctx.enabledStationIds ? ctx.enabledStationIds() : null;
+    const openIn = (ctx.config.openIn || []).filter(id => !enabled || enabled.includes(id));
     el.innerHTML = `<div class="card"><h3>Lifecycle</h3>
       <div><span class="badge ${ctx.esc(state)}">${ctx.esc(state)}</span></div>
       <div class="muted" style="margin-top:6px">Can become: ${(transitions[state] || []).join(', ') || 'nothing — terminal state'}</div>

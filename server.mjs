@@ -17,11 +17,12 @@ await plugins.load();
 // Sync the declared catalog into the SQLite crosswalk. Owner state survives:
 // enabled flags are never overwritten, and default station wiring is seeded
 // only for stations with no wiring rows at all.
-const { catalogRows, defaultWiring, retired, sidebarDefaults } = await import('./plugins/registry.mjs');
+const { catalogRows, defaultWiring, retired, sidebarDefaults, wiringAdditions } = await import('./plugins/registry.mjs');
 store.retirePlugins(retired);
 store.sidebarDefaults = sidebarDefaults;
 store.syncCatalog(catalogRows(plugins.manifest()));
 store.seedStationWiring(defaultWiring);
+store.applyWiringAdditions(wiringAdditions);
 
 // Two surfaces, one store. The owner port serves the UI and honors the request's
 // actor. The agent port is API-only and forces actor=agent at the boundary, so

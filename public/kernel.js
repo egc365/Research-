@@ -198,6 +198,9 @@ function makeContext(stationId, config, wiringRows = null) {
     // (e.g. the tree shows "Labels…" only when label-editor is wired here).
     get wiring() { return wiringRows || kernel.composition.stations[stationId] || []; },
     activateStation,
+    // Which stations a contribution may offer to open — retired or disabled
+    // ids (e.g. an old openIn config naming file-workbench) filter out.
+    enabledStationIds: () => enabledStations().map(row => row.plugin_id),
     selectFile, refreshSelection, saveFile,
     notify, esc,
     onDirty(guard) { kernel.dirtyGuards.push(guard); }
@@ -230,15 +233,39 @@ function enabledStations() {
   return kernel.composition.enabled.filter(row => row.plugin_kind === 'station');
 }
 
+// The nav delineates stations by function (manifest.category): Plan, Curate,
+// Monitor lead; anything uncategorized lands in a trailing bucket in the
+// order it appears. Groups render as a labeled cluster, not a flat row.
+const CATEGORY_ORDER = ['Plan', 'Curate', 'Monitor'];
+
 function renderStationBar() {
   stationBar.replaceChildren();
+  const buckets = new Map();
   for (const row of enabledStations()) {
-    const button = document.createElement('button');
-    button.textContent = `${row.manifest.icon || ''} ${row.label}`.trim();
-    button.classList.toggle('active', row.plugin_id === kernel.activeStation);
-    button.onclick = () => activateStation(row.plugin_id);
-    stationBar.append(button);
+    const category = row.manifest.category || 'More';
+    if (!buckets.has(category)) buckets.set(category, []);
+    buckets.get(category).push(row);
   }
+  const order = [...CATEGORY_ORDER.filter(c => buckets.has(c)), ...[...buckets.keys()].filter(c => !CATEGORY_ORDER.includes(c))];
+  for (const category of order) {
+    const cluster = document.createElement('div');
+    cluster.style.cssText = 'display:flex;align-items:center;gap:4px;padding:0 8px;border-left:1px solid var(--line, #333)';
+    if (buckets.size > 1) {
+      const tag = document.createElement('span');
+      tag.textContent = category;
+      tag.style.cssText = 'font-size:10px;letter-spacing:.08em;text-transform:uppercase;opacity:.5;margin-right:2px';
+      cluster.append(tag);
+    }
+    for (const row of buckets.get(category)) {
+      const button = document.createElement('button');
+      button.textContent = `${row.manifest.icon || ''} ${row.label}`.trim();
+      button.classList.toggle('active', row.plugin_id === kernel.activeStation);
+      button.onclick = () => activateStation(row.plugin_id);
+      cluster.append(button);
+    }
+    stationBar.append(cluster);
+  }
+  if (stationBar.firstChild) stationBar.firstChild.style.borderLeft = 'none';
 }
 
 // A registered workspace whose folder is gone from disk (moved or deleted

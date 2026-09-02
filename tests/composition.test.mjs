@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { ControlStore } from '../src/store.mjs';
-import { catalogRows, defaultWiring, stations, contributions } from '../plugins/registry.mjs';
+import { catalogRows, defaultWiring, retired, stations, contributions } from '../plugins/registry.mjs';
 
 function freshStore(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-ops-comp-'));
@@ -62,7 +62,7 @@ test('owner wiring edits survive a reseed', t => {
   const { store } = freshStore(t);
   store.syncCatalog(catalogRows([]));
   store.seedStationWiring(defaultWiring);
-  for (const id of ['launchpad', 'folder-cards', 'inbox', 'statistics-view']) {
+  for (const id of ['launchpad', 'board-view', 'folder-cards', 'inbox', 'statistics-view']) {
     store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: id, remove: true });
   }
   store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'candidate-list', sortOrder: 10 });
@@ -145,4 +145,35 @@ test('owner-defined stations render like shipped ones and survive catalog sync',
   const composition = store.composition(ws);
   assert.ok(composition.enabled.some(r => r.plugin_id === 'reading-room'));
   assert.deepEqual(composition.stations['reading-room'].map(r => r.contribution_id), ['dual-document-view']);
+});
+
+test('wiring additions apply exactly once — an owner unwire is never fought', t => {
+  const { store } = freshStore(t);
+  store.syncCatalog(catalogRows([]));
+  // The dashboard already has owner wiring rows, so the seeder skips it.
+  store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'launchpad', sortOrder: 10 });
+  const additions = [{ id: 'test-add-board', stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'board-view', sortOrder: 15 }];
+  store.applyWiringAdditions(additions);
+  const wired = () => store.db.prepare(
+    "SELECT contribution_id FROM station_contributions WHERE station_id='dashboard-viewer' ORDER BY sort_order"
+  ).all().map(r => r.contribution_id);
+  assert.deepEqual(wired(), ['launchpad', 'board-view']);
+  // Owner removes it; a restart re-applies additions — the row must stay gone.
+  store.db.prepare("DELETE FROM station_contributions WHERE contribution_id='board-view'").run();
+  store.applyWiringAdditions(additions);
+  assert.deepEqual(wired(), ['launchpad']);
+});
+
+test('file-workbench is retired: no station row, no wiring, category on every survivor', t => {
+  const { store } = freshStore(t);
+  store.syncCatalog(catalogRows([]));
+  store.retirePlugins(retired);
+  store.seedStationWiring(defaultWiring);
+  const catalog = store.listCatalog();
+  assert.equal(catalog.some(r => r.plugin_id === 'file-workbench'), false);
+  for (const row of catalog.filter(r => r.plugin_kind === 'station')) {
+    assert.ok(row.manifest.category, `${row.plugin_id} has a nav category`);
+  }
+  assert.equal(defaultWiring['file-workbench'], undefined);
+  assert.ok(defaultWiring['dashboard-viewer'].main.includes('board-view'));
 });
