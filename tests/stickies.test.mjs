@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { plugin, STICKY_COLORS } from '../plugins/server/stickies.mjs';
+import { stickyKey } from '../public/contrib/lib/sticky.js';
 
 function workspace(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'research-ops-stickies-'));
@@ -70,4 +71,19 @@ test('set with an absolute path under rootPath stores under the relative key', a
   const { notes } = await act(root, 'list');
   assert.equal(notes['demo-test-1'].text, 'on the folder');
   assert.equal(notes['testing '].text, 'on the file');
+});
+
+test('one set is visible to both folder-card relativePath and board-card ref keyings', async t => {
+  const root = workspace(t);
+  fs.mkdirSync(path.join(root, 'docs'));
+  fs.writeFileSync(path.join(root, 'docs', 'plan.md'), '');
+  const relativePath = 'docs/plan.md';
+  const boardRef = path.join(root, 'docs', 'plan.md');
+  assert.equal(stickyKey(root, relativePath), relativePath);
+  assert.equal(stickyKey(root, boardRef), relativePath);
+  await act(root, 'set', { path: boardRef, text: 'ship the plan first' });
+  const { notes } = await act(root, 'list');
+  assert.equal(notes[relativePath].text, 'ship the plan first');
+  assert.equal(notes[boardRef], undefined);
+  assert.equal(Object.keys(notes).length, 1);
 });

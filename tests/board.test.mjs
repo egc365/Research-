@@ -148,6 +148,33 @@ test('sticky colors: column added to pre-existing boards, set-color validates th
   assert.equal(cleared.color, null);
 });
 
+test('color round-trips on file, link, and note cards', async t => {
+  const root = workspace(t);
+  const g = await act(root, 'add-group', { title: 'G' });
+  const { STICKY_COLORS } = await import('../plugins/server/stickies.mjs');
+  const file = await act(root, 'add-card', { groupId: g.group_id, kind: 'file', ref: 'docs/plan.md', color: STICKY_COLORS[1] });
+  const link = await act(root, 'add-card', { groupId: g.group_id, kind: 'link', ref: 'http://127.0.0.1:9', color: STICKY_COLORS[2] });
+  const note = await act(root, 'add-card', { groupId: g.group_id, kind: 'note', ref: 'hello\nworld', color: STICKY_COLORS[3] });
+  assert.equal(file.color, STICKY_COLORS[1]);
+  assert.equal(link.color, STICKY_COLORS[2]);
+  assert.equal(note.color, STICKY_COLORS[3]);
+  await act(root, 'set-color', { cardId: file.card_id, color: STICKY_COLORS[4] });
+  await act(root, 'set-color', { cardId: link.card_id, color: STICKY_COLORS[5] });
+  await act(root, 'set-color', { cardId: note.card_id, color: STICKY_COLORS[0] });
+  const { groups } = await act(root, 'tree');
+  const byKind = Object.fromEntries(groups[0].cards.map(c => [c.kind, c.color]));
+  assert.equal(byKind.file, STICKY_COLORS[4]);
+  assert.equal(byKind.link, STICKY_COLORS[5]);
+  assert.equal(byKind.note, STICKY_COLORS[0]);
+  await act(root, 'set-color', { cardId: file.card_id, color: null });
+  const after = await act(root, 'tree');
+  assert.equal(after.groups[0].cards.find(c => c.kind === 'file').color, null);
+  await assert.rejects(
+    act(root, 'add-card', { groupId: g.group_id, kind: 'note', ref: 'nope', color: '#123456' }),
+    e => e.code === 'BOARD_BAD_INPUT'
+  );
+});
+
 test('agent surface may read the tree but never mutate', async t => {
   const root = workspace(t);
   const a = await act(root, 'add-group', { title: 'A' });

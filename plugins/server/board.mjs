@@ -35,6 +35,7 @@ function boardDb(rootPath) {
       kind TEXT NOT NULL CHECK(kind IN ('file','link','note')),
       ref TEXT NOT NULL,
       title TEXT,
+      color TEXT,
       sort_order INTEGER NOT NULL DEFAULT 100,
       created_at TEXT NOT NULL
     );
@@ -147,10 +148,12 @@ export const plugin = {
       if (!['file', 'link', 'note'].includes(kind)) throw fail('BOARD_BAD_INPUT', `Unknown card kind: ${kind}`);
       const ref = String(payload.ref || '').trim();
       if (!ref) throw fail('BOARD_BAD_INPUT', 'A card needs a ref (path, url, or note text)');
+      const color = payload.color == null ? null : String(payload.color);
+      if (color != null && !STICKY_COLORS.includes(color)) throw fail('BOARD_BAD_INPUT', `Not a sticky color: ${color}`);
       const sortOrder = nextOrder(db, 'board_cards', 'group_id=?', groupId);
       const { lastInsertRowid } = db.prepare(
-        'INSERT INTO board_cards (group_id, kind, ref, title, sort_order, created_at) VALUES (?,?,?,?,?,?)'
-      ).run(groupId, kind, ref, payload.title == null ? null : String(payload.title), sortOrder, now());
+        'INSERT INTO board_cards (group_id, kind, ref, title, color, sort_order, created_at) VALUES (?,?,?,?,?,?,?)'
+      ).run(groupId, kind, ref, payload.title == null ? null : String(payload.title), color, sortOrder, now());
       return mustCard(db, Number(lastInsertRowid));
     }
 
