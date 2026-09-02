@@ -33,14 +33,14 @@ export const stations = [
   {
     id: 'dashboard-viewer', label: 'Board', version: '1.2.0',
     manifest: {
-      description: 'The workspace board: groups of real files, links and notes. This is the frame a workspace lands on.',
+      description: 'The workspace board: lanes of real files and folders, links and notes. This is the frame a workspace lands on.',
       layout: 'main', slots: ['main'], icon: '🗂'
     }
   },
   {
     id: 'whiteboard', label: 'Whiteboard', version: '1.0.0',
     manifest: {
-      description: 'The uncommitted board: groups, cards and pasted images in memory until Save to project writes them as a Board.',
+      description: 'The uncommitted board: lanes, cards and pasted images in memory until Save to project writes them as a Board.',
       layout: 'main', slots: ['main'], icon: '🖌'
     }
   },
@@ -118,8 +118,8 @@ export const contributions = [
   { id: 'tool-health-view',   label: 'Tool health',        entry: '/contrib/tool-health.js',        description: 'Port health board: probes the machine’s tools via the tool-health service and shows up/down with latency. Extra targets via wiring config { targets: [...] }.' },
   { id: 'transcript-search-view', label: 'Transcript search', entry: '/contrib/transcript-search.js', description: 'Bot cutover → session list → filtered deep search over native transcripts, via the transcript-search service.' },
   { id: 'trace-lanes-view',   label: 'Trace lanes',        entry: '/contrib/trace-lanes.js',        description: 'Tempo span lanes from :8885, iframe by default; URL overridable via wiring config { url }. Up/down via the tool-health service.' },
-  { id: 'board-view',         label: 'Board',              entry: '/contrib/board-view.js',         description: 'Planning board over the workspace: group tiles laid out per orientation, breadcrumb drill-in, drag cards to reorder or move; file cards select the file, links open, notes edit inline.' },
-  { id: 'whiteboard-view',    label: 'Whiteboard',         entry: '/contrib/board-view.js',         description: 'The same board plugin in memory: sketch groups and cards, paste images, then Save to project to write the tree and open it as a Board.' },
+  { id: 'board-view',         label: 'Board',              entry: '/contrib/board-view.js',         description: 'Planning board over the workspace: lanes laid out per orientation, folder cards drill into their surface, drag cards between lanes and to the floor; file cards select the file, links open, notes edit inline.' },
+  { id: 'whiteboard-view',    label: 'Whiteboard',         entry: '/contrib/board-view.js',         description: 'The same board plugin in memory: sketch lanes and cards, paste images, then Save to project to write the files flat under a folder and open it as a Board.' },
   { id: 'gpu-governor-view',  label: 'GPU governor',       entry: '/contrib/gpu-governor-view.js',  description: 'Governor board: current snapshot, allowlist rules + which path is live, recent enforcement events newest first, link to the :7890 dashboard. Event tail size via wiring config { eventLimit: N }.' },
   { id: 'parakeet-view',      label: 'Parakeet STT',       entry: '/contrib/parakeet-view.js',      description: 'Parakeet status card: up/down chip, config summary, raw status JSON, owner-only start/stop listening buttons, 15s auto-refresh.' }
 ];

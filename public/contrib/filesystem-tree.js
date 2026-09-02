@@ -3,7 +3,9 @@
 // path (registered and preflighted from its first byte); "＋ folder" makes a
 // real directory with a MKDIR provenance event. Rows can be dragged into a
 // folder (or the root drop bar) — a governed move that carries the registry
-// row, labels, amendments and frozen versions along with the bytes. Expanded
+// row, labels, amendments and frozen versions along with the bytes. A file
+// row also carries an x-ro-card payload so the board can take it as a card.
+// Expanded
 // folders persist per workspace in localStorage. Label chips come from the
 // SQLite crosswalk; the "Labels…" buttons appear only when the label-editor
 // contribution is wired into this station.
@@ -182,6 +184,7 @@ export async function mount(el, ctx) {
       row.addEventListener('dragstart', event => {
         draggedPath = entry.path;
         event.dataTransfer.setData('text/ro-path', entry.path);
+        if (entry.type === 'file') event.dataTransfer.setData('x-ro-card', JSON.stringify({ path: entry.path }));
         event.dataTransfer.effectAllowed = 'move';
       });
       row.addEventListener('dragend', () => { draggedPath = null; });

@@ -36,7 +36,7 @@ const kernel = {
   dirtyGuards: [],          // contributions veto navigation (unsaved editor text)
   prefs: { user: {}, workspace: {} },  // appearance + navigation preferences
   sidebarSections: [],      // sidebar_sections rows for the current workspace
-  boardPath: []             // board group ids from root to the open group
+  boardPath: []             // board surface folder, one segment per element, from the root
 };
 
 // -------------------------------------------------------- appearance engine
