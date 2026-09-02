@@ -34,6 +34,36 @@ export const plugin = {
         metadata
       });
     }
+    // Deterministic path up: one verb from working (or candidate) toward
+    // validated. Candidate is a checkpoint the machine passes through, not a
+    // choice the owner makes; validation receipts decide whether it sticks.
+    // A failing validation returns { state: 'candidate', validation } rather
+    // than throwing — the receipts are the answer. Promote, supersede and
+    // archive remain deliberate owner transitions.
+    if (action === 'submit') {
+      const artifact = store.getArtifact(payload.path);
+      if (!artifact) { const e = new Error(`Not a registered artifact: ${payload.path}`); e.code = 'BAD_STATE'; throw e; }
+      if (!['working', 'candidate'].includes(artifact.state)) {
+        const e = new Error(`Submit starts from working or candidate, not ${artifact.state}`);
+        e.code = 'BAD_STATE';
+        throw e;
+      }
+      const actor = payload.actor || 'human';
+      if (artifact.state === 'working') {
+        store.transition({ filePath: payload.path, toState: 'candidate', actor });
+      }
+      const current = store.readFile(artifact.workspace_root, payload.path);
+      const receipts = plugins
+        ? await plugins.runValidators({ filePath: payload.path, content: current.content, actor })
+        : { ok: true, results: [] };
+      if (!receipts.ok) return { state: 'candidate', validation: receipts };
+      store.transition({
+        filePath: payload.path, toState: 'validated', actor,
+        metadata: { validation: { ok: true, checksum: current.checksum, results: receipts.results } }
+      });
+      return { state: 'validated', validation: receipts };
+    }
+
     if (action === 'card') {
       const artifact = store.getArtifact(payload.path);
       if (!artifact) return { artifact: null };
