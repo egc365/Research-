@@ -1,13 +1,11 @@
 // One data-access seam for the board plugin. Board mode forwards verbs to the
 // board service. Whiteboard mode keeps the same rows in memory and
 // localStorage, keyed by workspace root. Save to project is the only crossing.
-import { STICKY_COLORS } from './sticky.js';
-
-export const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
-const MAX_DEPTH = 3;
-const MAX_FIELDS = 4;
-const NAMED_ICONS = ['file', 'folder', 'note', 'link', 'image'];
-const ORIENTATIONS = ['horizontal', 'vertical'];
+import {
+  fail, needName, needLaneName, idOrNull, relPath, childRel,
+  parseColor, parseOrientation, parseFace, parseIcon, parseFields, parseWidth, defaultFace, defaultIcon, viewCard,
+  nextOrder, laneDepth, subtreeHeight, assertDepth, assertNoCycle, imageDataUrl, imageFileName, nestTree
+} from './board-rules.js';
 
 function storageKey(rootPath) {
   return `ro.whiteboard.${rootPath || ''}`;
@@ -44,117 +42,13 @@ export function parseModel(raw) {
   };
 }
 
-function fail(code, message) {
-  const error = new Error(message);
-  error.code = code;
-  return error;
-}
-
-function defaultFace(kind) {
-  return kind === 'folder' ? 'sticky' : 'card';
-}
-
-function defaultIcon(kind) {
-  return NAMED_ICONS.includes(kind) ? kind : 'file';
-}
-
-function parseFace(raw, fallback) {
-  if (raw == null || raw === '') return fallback;
-  const face = String(raw);
-  if (face !== 'card' && face !== 'sticky') throw fail('BOARD_BAD_INPUT', `Unknown face: ${face}`);
-  return face;
-}
-
-function parseIcon(raw, fallback) {
-  if (raw == null || raw === '') return fallback;
-  const icon = String(raw);
-  if (NAMED_ICONS.includes(icon)) return icon;
-  if ([...icon].length === 1) return icon;
-  throw fail('BOARD_BAD_INPUT', `Unknown icon: ${icon}`);
-}
-
-function parseFields(payload, existingJson) {
-  if (payload.fields === undefined && payload.fields_json === undefined) {
-    return existingJson ?? '[]';
-  }
-  let arr;
-  if (payload.fields !== undefined) arr = payload.fields;
-  else if (payload.fields_json == null || payload.fields_json === '') arr = [];
-  else if (typeof payload.fields_json === 'string') {
-    try { arr = JSON.parse(payload.fields_json); }
-    catch { throw fail('BOARD_BAD_INPUT', 'fields_json is not JSON'); }
-  } else arr = payload.fields_json;
-  if (!Array.isArray(arr)) throw fail('BOARD_BAD_INPUT', 'fields must be an array');
-  if (arr.length > MAX_FIELDS) throw fail('BOARD_BAD_INPUT', 'A card holds at most four fields');
-  return JSON.stringify(arr.map(item => {
-    if (!item || typeof item !== 'object') throw fail('BOARD_BAD_INPUT', 'Each field needs a label and a value');
-    return { label: String(item.label ?? ''), value: String(item.value ?? '') };
-  }));
-}
-
-function parseColor(raw) {
-  if (raw == null) return null;
-  const color = String(raw);
-  if (!STICKY_COLORS.includes(color)) throw fail('BOARD_BAD_INPUT', `Not a sticky color: ${color}`);
-  return color;
-}
-
-function parseOrientation(raw) {
-  const orientation = String(raw || '');
-  if (!ORIENTATIONS.includes(orientation)) throw fail('BOARD_BAD_INPUT', `Unknown orientation: ${orientation}`);
-  return orientation;
-}
-
-function viewCard(row) {
-  if (!row) return row;
-  return {
-    ...row,
-    face: row.face || defaultFace(row.kind),
-    icon: row.icon || defaultIcon(row.kind),
-    fields_json: row.fields_json || '[]'
-  };
-}
-
-function needName(raw) {
-  const name = String(raw || '').trim();
-  if (!name) throw fail('BOARD_BAD_INPUT', 'A name is required');
-  if (name === '.' || name === '..' || /[\\/]/.test(name)) {
-    throw fail('BOARD_BAD_INPUT', 'A name is one path segment');
-  }
-  return name;
-}
-
-function needLaneName(raw) {
-  const name = String(raw || '').trim();
-  if (!name) throw fail('BOARD_BAD_INPUT', 'A lane needs a name');
-  return name;
-}
-
-function idOrNull(raw) {
-  return raw == null || raw === '' ? null : Number(raw);
-}
-
-function relPath(raw) {
-  const s = String(raw || '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
-  if (!s || s === '.') return '';
-  const parts = s.split('/');
-  for (const p of parts) {
-    if (!p || p === '.' || p === '..') throw fail('BOARD_BAD_INPUT', 'A surface is a path inside the workspace');
-  }
-  return parts.join('/');
-}
-
-function childRel(parentRel, name) {
-  return parentRel ? `${parentRel}/${name}` : name;
-}
-
-function nextOrder(rows, pred) {
+function topOrder(rows, pred) {
   let top = null;
   for (const row of rows) {
     if (!pred(row)) continue;
     if (top == null || row.sort_order > top) top = row.sort_order;
   }
-  return top == null ? 100 : Number(top) + 10;
+  return top;
 }
 
 function mustLane(state, laneId) {
@@ -175,48 +69,15 @@ function mustCard(state, cardId) {
   return row;
 }
 
-function laneDepth(state, laneId) {
-  let depth = 0;
-  let cursor = laneId;
-  while (cursor != null) { depth++; cursor = mustLane(state, cursor).parent_lane_id; }
-  return depth;
-}
-
-function subtreeHeight(state, laneId) {
-  const children = state.lanes.filter(l => l.parent_lane_id === laneId);
-  let deepest = 0;
-  for (const child of children) deepest = Math.max(deepest, subtreeHeight(state, child.lane_id));
-  return 1 + deepest;
-}
+const parentOf = state => id => mustLane(state, id).parent_lane_id;
+const childrenOf = state => id => state.lanes.filter(l => l.parent_lane_id === id).map(l => l.lane_id);
 
 function treeFrom(state, surface) {
-  const lanes = state.lanes.filter(l => l.surface === surface)
-    .sort((a, b) => a.sort_order - b.sort_order || a.lane_id - b.lane_id)
-    .map(l => ({ ...l, lanes: [], cards: [] }));
-  const cards = state.cards.filter(c => c.surface === surface)
-    .sort((a, b) => a.sort_order - b.sort_order || a.card_id - b.card_id);
-  const byId = new Map(lanes.map(l => [l.lane_id, l]));
-  const floor = [];
-  for (const card of cards) {
-    const viewed = viewCard(card);
-    if (card.lane_id == null) floor.push(viewed);
-    else byId.get(card.lane_id)?.cards.push(viewed);
-  }
-  const roots = [];
-  for (const node of byId.values()) {
-    if (node.parent_lane_id != null && byId.has(node.parent_lane_id)) byId.get(node.parent_lane_id).lanes.push(node);
-    else roots.push(node);
-  }
-  return { surface, lanes: roots, cards: floor };
-}
-
-function dataUrlBytes(ref) {
-  const s = String(ref || '');
-  const i = s.indexOf(',');
-  if (i < 0) return 0;
-  const b64 = s.slice(i + 1);
-  const pad = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
-  return Math.floor(b64.length * 3 / 4) - pad;
+  return nestTree(
+    surface,
+    state.lanes.filter(l => l.surface === surface).sort((a, b) => a.sort_order - b.sort_order || a.lane_id - b.lane_id),
+    state.cards.filter(c => c.surface === surface).sort((a, b) => a.sort_order - b.sort_order || a.card_id - b.card_id)
+  );
 }
 
 function readStorage(key) {
@@ -229,7 +90,7 @@ function writeStorage(key, value) {
 
 function apply(state, action, payload) {
   const now = () => new Date().toISOString();
-  const surface = relPath(payload.surface);
+  const surface = relPath(payload.surface, 'A surface');
 
   if (action === 'tree') return treeFrom(state, surface);
 
@@ -237,7 +98,7 @@ function apply(state, action, payload) {
     const parentLaneId = idOrNull(payload.parentLaneId);
     if (parentLaneId != null) {
       laneOn(state, parentLaneId, surface);
-      if (laneDepth(state, parentLaneId) >= MAX_DEPTH) throw fail('BOARD_DEPTH', `Lanes nest at most ${MAX_DEPTH} deep`);
+      assertDepth(laneDepth(parentLaneId, parentOf(state)) + 1);
     }
     const row = {
       lane_id: state.nextLane++,
@@ -245,7 +106,7 @@ function apply(state, action, payload) {
       parent_lane_id: parentLaneId,
       name: needLaneName(payload.name),
       orientation: payload.orientation == null ? 'vertical' : parseOrientation(payload.orientation),
-      sort_order: nextOrder(state.lanes, l => l.surface === surface && l.parent_lane_id === parentLaneId),
+      sort_order: nextOrder(topOrder(state.lanes, l => l.surface === surface && l.parent_lane_id === parentLaneId)),
       created_at: now()
     };
     state.lanes.push(row);
@@ -261,8 +122,6 @@ function apply(state, action, payload) {
     let ref;
     let title = payload.title == null ? null : String(payload.title);
     let body;
-    const width = payload.width == null ? null : Number(payload.width);
-    const height = payload.height == null ? null : Number(payload.height);
     if (kind === 'folder') {
       const name = needName(payload.name);
       ref = childRel(surface, name);
@@ -273,9 +132,7 @@ function apply(state, action, payload) {
       if (title == null && body.trim()) title = body.trim().split('\n')[0];
     } else if (kind === 'image') {
       ref = String(payload.ref || '').trim();
-      if (!/^data:image\//.test(ref)) throw fail('BOARD_BAD_INPUT', 'An image card needs a data URL');
-      if (dataUrlBytes(ref) > MAX_IMAGE_BYTES) throw fail('BOARD_BAD_INPUT', 'Image is larger than 2 MB');
-      title = title || needName(payload.name || 'image.png');
+      title = imageFileName(title, imageDataUrl(ref).mime);
     } else {
       ref = String(payload.ref || '').trim();
       if (!ref) throw fail('BOARD_BAD_INPUT', 'A card needs a ref (path, url, or note text)');
@@ -291,14 +148,11 @@ function apply(state, action, payload) {
       face: parseFace(payload.face, defaultFace(kind)),
       icon: parseIcon(payload.icon, defaultIcon(kind)),
       fields_json: parseFields(payload, '[]'),
-      sort_order: nextOrder(state.cards, c => c.surface === surface && c.lane_id === laneId),
+      width: null,
+      sort_order: nextOrder(topOrder(state.cards, c => c.surface === surface && c.lane_id === laneId)),
       created_at: now()
     };
     if (kind === 'file') row.body = body;
-    if (kind === 'image') {
-      if (Number.isFinite(width) && width > 0) row.width = width;
-      if (Number.isFinite(height) && height > 0) row.height = height;
-    }
     state.cards.push(row);
     return viewCard(row);
   }
@@ -334,14 +188,7 @@ function apply(state, action, payload) {
       }
     }
     if (payload.body !== undefined) card.body = String(payload.body);
-    if (payload.width !== undefined) {
-      const n = Number(payload.width);
-      card.width = Number.isFinite(n) && n > 0 ? n : null;
-    }
-    if (payload.height !== undefined) {
-      const n = Number(payload.height);
-      card.height = Number.isFinite(n) && n > 0 ? n : null;
-    }
+    if (payload.width !== undefined) card.width = parseWidth(payload.width);
     card.face = parseFace(payload.face, card.face);
     card.icon = parseIcon(payload.icon, card.icon);
     card.fields_json = parseFields(payload, card.fields_json);
@@ -366,14 +213,8 @@ function apply(state, action, payload) {
     const toParentId = idOrNull(payload.toParentLaneId);
     if (toParentId != null) {
       laneOn(state, toParentId, lane.surface);
-      let cursor = toParentId;
-      while (cursor != null) {
-        if (cursor === lane.lane_id) throw fail('BOARD_CYCLE', 'Cannot move a lane under itself or its own descendant');
-        cursor = mustLane(state, cursor).parent_lane_id;
-      }
-      if (laneDepth(state, toParentId) + subtreeHeight(state, lane.lane_id) > MAX_DEPTH) {
-        throw fail('BOARD_DEPTH', `Lanes nest at most ${MAX_DEPTH} deep`);
-      }
+      assertNoCycle(lane.lane_id, toParentId, parentOf(state));
+      assertDepth(laneDepth(toParentId, parentOf(state)) + subtreeHeight(lane.lane_id, childrenOf(state)));
     }
     lane.parent_lane_id = toParentId;
     lane.sort_order = sortOrder;
@@ -384,7 +225,7 @@ function apply(state, action, payload) {
     if (payload.cardId != null) {
       mustCard(state, Number(payload.cardId));
       state.cards = state.cards.filter(c => c.card_id !== Number(payload.cardId));
-      return { removed: 'card', cardId: Number(payload.cardId), disk: 'none' };
+      return { removed: 'card', cardId: Number(payload.cardId) };
     }
     const laneId = Number(payload.laneId);
     const lane = mustLane(state, laneId);
@@ -401,11 +242,11 @@ function apply(state, action, payload) {
     }
     for (const card of [...state.cards].sort((a, b) => a.sort_order - b.sort_order || a.card_id - b.card_id)) {
       if (card.lane_id == null || !ids.has(card.lane_id)) continue;
-      card.sort_order = nextOrder(state.cards, c => c.surface === lane.surface && c.lane_id == null);
+      card.sort_order = nextOrder(topOrder(state.cards, c => c.surface === lane.surface && c.lane_id == null));
       card.lane_id = null;
     }
     state.lanes = state.lanes.filter(l => !ids.has(l.lane_id));
-    return { removed: 'lane', laneId, disk: 'none', cards: 'floor' };
+    return { removed: 'lane', laneId, cards: 'floor' };
   }
 
   throw new Error(`Unknown board action: ${action}`);

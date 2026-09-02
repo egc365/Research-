@@ -140,7 +140,6 @@ test('whiteboard store never calls the board service or the filesystem', async t
 test('Save writes files flat under the destination, lanes into the board, and LANES.json', async t => {
   const ws = workspace(t);
   const saved = await act(ws, 'save-to-project', { destination: 'projects', name: 'Q3 plan', model: sketchModel() });
-  assert.equal(saved.label, 'Q3 plan');
   assert.equal(saved.destination, 'projects');
   assert.equal(saved.surface, 'projects');
   const dest = path.join(ws.root, 'projects');

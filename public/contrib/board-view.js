@@ -7,11 +7,9 @@
 // the floor; the sidebar tree's file rows drop in as file cards. Every
 // mutation goes through the board store and the view repaints from 'tree'.
 import { styleSticky, paletteEl, stickyKey, isolateStickyPointer, colorForLabel, DEFAULT_COLOR } from '/contrib/lib/sticky.js';
-import { boardStore, MAX_IMAGE_BYTES } from '/contrib/lib/board-store.js';
+import { boardStore } from '/contrib/lib/board-store.js';
+import { NAMED_ICONS, MAX_FIELDS, MAX_DEPTH } from '/contrib/lib/board-rules.js';
 
-const NAMED_ICONS = ['file', 'folder', 'note', 'link', 'image'];
-const MAX_FIELDS = 4;
-const MAX_DEPTH = 3;
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg)$/i;
 const CARD_MIME = 'x-ro-card';
 
@@ -269,15 +267,12 @@ export function mount(el, ctx) {
     });
   };
 
+  // Each image becomes a card titled with its own file name; the store keeps
+  // the bytes in their source format and refuses anything over the cap.
   function ingestFiles(fileList, laneId) {
     const files = [...fileList].filter(f => f && /^image\//.test(f.type));
     if (!files.length) return;
     const jobs = files.map(file => new Promise((resolve, reject) => {
-      if (file.size > MAX_IMAGE_BYTES) {
-        ctx.notify('Image is larger than 2 MB', 'error');
-        resolve(null);
-        return;
-      }
       const reader = new FileReader();
       reader.onload = () => resolve({ file, dataUrl: reader.result });
       reader.onerror = () => reject(new Error('Could not read image'));
@@ -285,16 +280,11 @@ export function mount(el, ctx) {
     }));
     Promise.all(jobs).then(async items => {
       for (const item of items) {
-        if (!item) continue;
-        await call('add-card', { kind: 'image', laneId, ref: item.dataUrl, title: fileNamePng(item.file.name) });
+        try { await call('add-card', { kind: 'image', laneId, ref: item.dataUrl, title: item.file.name }); }
+        catch (error) { ctx.notify(error.message, 'error'); }
       }
       repaint();
     }).catch(error => ctx.notify(error.message, 'error'));
-  }
-
-  function fileNamePng(name) {
-    const base = String(name || 'image.png').split(/[\\/]/).pop() || 'image.png';
-    return /\.png$/i.test(base) ? base : base.replace(/\.[^.]+$/, '') + '.png';
   }
 
   // ---- rendering (DOM API + textContent, so titles/refs need no escaping) --
@@ -995,7 +985,6 @@ export function mount(el, ctx) {
     destLab.textContent = 'Destination folder';
     const destInput = document.createElement('input');
     destInput.type = 'text';
-    destInput.className = 'board-save-dest';
     destInput.placeholder = 'projects';
     destInput.value = 'projects';
     destLab.appendChild(destInput);

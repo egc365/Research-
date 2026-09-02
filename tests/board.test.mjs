@@ -322,8 +322,8 @@ test('removing a card drops the row and leaves the disk alone', async t => {
   const ws = workspace(t);
   const folder = await act(ws, 'add-card', { kind: 'folder', name: 'plans' });
   const file = await act(ws, 'add-card', { kind: 'file', name: 'README.md', body: 'stay' });
-  assert.equal((await act(ws, 'remove', { cardId: folder.card_id })).disk, 'left');
-  assert.equal((await act(ws, 'remove', { cardId: file.card_id })).disk, 'left');
+  assert.equal((await act(ws, 'remove', { cardId: folder.card_id })).removed, 'card');
+  assert.equal((await act(ws, 'remove', { cardId: file.card_id })).removed, 'card');
   assert.equal(fs.statSync(path.join(ws.root, 'plans')).isDirectory(), true);
   assert.equal(fs.readFileSync(path.join(ws.root, 'README.md'), 'utf8'), 'stay\n');
   assert.deepEqual((await act(ws, 'tree')).cards, []);
@@ -343,7 +343,7 @@ test('removing a lane drops its cards, and its inner lanes\' cards, to the floor
   const rootNote = await act(ws, 'add-card', { kind: 'note', ref: 'root surface' });
   const removed = await act(ws, 'remove', { laneId: a.lane_id });
   assert.equal(removed.cards, 'floor');
-  assert.equal(removed.disk, 'left');
+  assert.equal(removed.removed, 'lane');
   const { lanes, cards } = await act(ws, 'tree', s);
   assert.deepEqual(lanes.map(l => l.name), ['B']);
   assert.deepEqual(cards.map(c => [c.card_id, c.ref, c.lane_id]), [

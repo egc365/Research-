@@ -8,7 +8,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { STICKY_COLORS } from './stickies.mjs';
+import {
+  fail, needName, needLaneName, idOrNull, relPath, childRel,
+  parseColor, parseOrientation, parseFace, parseIcon, parseFields, defaultFace, defaultIcon, viewCard,
+  nextOrder, laneDepth, subtreeHeight, assertDepth, assertNoCycle, imageDataUrl, imageFileName, nestTree
+} from '../../public/contrib/lib/board-rules.js';
 
 const handles = new Map();
 
@@ -99,86 +103,6 @@ function boardDb(rootPath) {
   return db;
 }
 
-function fail(code, message) {
-  const error = new Error(message);
-  error.code = code;
-  return error;
-}
-
-const NAMED_ICONS = ['file', 'folder', 'note', 'link', 'image'];
-const MAX_FIELDS = 4;
-const ORIENTATIONS = ['horizontal', 'vertical'];
-
-function defaultFace(kind) {
-  return kind === 'folder' ? 'sticky' : 'card';
-}
-
-function defaultIcon(kind) {
-  return NAMED_ICONS.includes(kind) ? kind : 'file';
-}
-
-function parseFace(raw, fallback) {
-  if (raw == null || raw === '') return fallback;
-  const face = String(raw);
-  if (face !== 'card' && face !== 'sticky') throw fail('BOARD_BAD_INPUT', `Unknown face: ${face}`);
-  return face;
-}
-
-function parseIcon(raw, fallback) {
-  if (raw == null || raw === '') return fallback;
-  const icon = String(raw);
-  if (NAMED_ICONS.includes(icon)) return icon;
-  if ([...icon].length === 1) return icon;
-  throw fail('BOARD_BAD_INPUT', `Unknown icon: ${icon}`);
-}
-
-function parseFields(payload, existingJson) {
-  if (payload.fields === undefined && payload.fields_json === undefined) {
-    return existingJson ?? '[]';
-  }
-  let arr;
-  if (payload.fields !== undefined) {
-    arr = payload.fields;
-  } else if (payload.fields_json == null || payload.fields_json === '') {
-    arr = [];
-  } else if (typeof payload.fields_json === 'string') {
-    try { arr = JSON.parse(payload.fields_json); }
-    catch { throw fail('BOARD_BAD_INPUT', 'fields_json is not JSON'); }
-  } else {
-    arr = payload.fields_json;
-  }
-  if (!Array.isArray(arr)) throw fail('BOARD_BAD_INPUT', 'fields must be an array');
-  if (arr.length > MAX_FIELDS) throw fail('BOARD_BAD_INPUT', 'A card holds at most four fields');
-  const clean = arr.map(item => {
-    if (!item || typeof item !== 'object') throw fail('BOARD_BAD_INPUT', 'Each field needs a label and a value');
-    return { label: String(item.label ?? ''), value: String(item.value ?? '') };
-  });
-  return JSON.stringify(clean);
-}
-
-function parseColor(raw) {
-  if (raw == null) return null;
-  const color = String(raw);
-  if (!STICKY_COLORS.includes(color)) throw fail('BOARD_BAD_INPUT', `Not a sticky color: ${color}`);
-  return color;
-}
-
-function parseOrientation(raw) {
-  const orientation = String(raw || '');
-  if (!ORIENTATIONS.includes(orientation)) throw fail('BOARD_BAD_INPUT', `Unknown orientation: ${orientation}`);
-  return orientation;
-}
-
-function viewCard(row) {
-  if (!row) return row;
-  return {
-    ...row,
-    face: row.face || defaultFace(row.kind),
-    icon: row.icon || defaultIcon(row.kind),
-    fields_json: row.fields_json || '[]'
-  };
-}
-
 function mustLane(db, laneId) {
   const row = db.prepare('SELECT * FROM board_lanes WHERE lane_id=?').get(laneId);
   if (!row) throw fail('BOARD_NOT_FOUND', `No such lane: ${laneId}`);
@@ -202,29 +126,6 @@ function mustStore(store) {
   return store;
 }
 
-function needName(raw) {
-  const name = String(raw || '').trim();
-  if (!name) throw fail('BOARD_BAD_INPUT', 'A name is required');
-  if (name === '.' || name === '..' || /[\\/]/.test(name)) {
-    throw fail('BOARD_BAD_INPUT', 'A name is one path segment');
-  }
-  return name;
-}
-
-function needLaneName(raw) {
-  const name = String(raw || '').trim();
-  if (!name) throw fail('BOARD_BAD_INPUT', 'A lane needs a name');
-  return name;
-}
-
-function idOrNull(raw) {
-  return raw == null || raw === '' ? null : Number(raw);
-}
-
-function childRel(parentRel, name) {
-  return parentRel ? `${parentRel.replace(/\/+$/, '')}/${name}` : name;
-}
-
 function joinRel(a, b) {
   return a && b ? `${a}/${b}` : a || b;
 }
@@ -233,69 +134,40 @@ function absIn(rootPath, rel) {
   return path.join(path.resolve(rootPath), rel);
 }
 
-// A workspace-relative path with no empty, dot, or dot-dot segments. '' is the root.
-function relPath(raw, what) {
-  const s = String(raw || '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
-  if (!s || s === '.') return '';
-  const parts = s.split('/');
-  for (const p of parts) {
-    if (!p || p === '.' || p === '..') throw fail('BOARD_BAD_INPUT', `${what} is a path inside the workspace`);
-  }
-  return parts.join('/');
-}
-
 function underSurface(rel, surface) {
   return surface === '' ? rel !== '' : rel.startsWith(`${surface}/`);
 }
 
-// Lanes nest at most three deep on a surface (ADR-029). Depth 3 holds cards only.
-const MAX_DEPTH = 3;
-
-function laneDepth(db, laneId) {
-  let depth = 0;
-  let cursor = laneId;
-  while (cursor != null) { depth++; cursor = mustLane(db, cursor).parent_lane_id; }
-  return depth;
-}
+const parentOf = db => id => mustLane(db, id).parent_lane_id;
+const childrenOf = db => id => db.prepare('SELECT lane_id FROM board_lanes WHERE parent_lane_id=?').all(id).map(r => r.lane_id);
 
 // The lane and every lane under it, parents before children.
 function laneSubtree(db, laneId) {
   const ids = [laneId];
-  for (let i = 0; i < ids.length; i++) {
-    for (const child of db.prepare('SELECT lane_id FROM board_lanes WHERE parent_lane_id=?').all(ids[i])) ids.push(child.lane_id);
-  }
+  for (let i = 0; i < ids.length; i++) ids.push(...childrenOf(db)(ids[i]));
   return ids;
 }
 
-function subtreeHeight(db, laneId) {
-  const children = db.prepare('SELECT lane_id FROM board_lanes WHERE parent_lane_id=?').all(laneId);
-  let deepest = 0;
-  for (const child of children) deepest = Math.max(deepest, subtreeHeight(db, child.lane_id));
-  return 1 + deepest;
-}
-
-// New siblings land after the last one, with a gap the client can drag into.
-function nextOrder(db, table, where, ...params) {
-  const row = db.prepare(`SELECT MAX(sort_order) AS top FROM ${table} WHERE ${where}`).get(...params);
-  return row?.top == null ? 100 : Number(row.top) + 10;
+function topOrder(db, table, where, ...params) {
+  return db.prepare(`SELECT MAX(sort_order) AS top FROM ${table} WHERE ${where}`).get(...params)?.top;
 }
 
 function nextCardOrder(db, surface, laneId) {
-  return laneId == null
-    ? nextOrder(db, 'board_cards', 'surface=? AND lane_id IS NULL', surface)
-    : nextOrder(db, 'board_cards', 'lane_id=?', laneId);
+  return nextOrder(laneId == null
+    ? topOrder(db, 'board_cards', 'surface=? AND lane_id IS NULL', surface)
+    : topOrder(db, 'board_cards', 'lane_id=?', laneId));
 }
 
 function nextLaneOrder(db, surface, parentLaneId) {
-  return parentLaneId == null
-    ? nextOrder(db, 'board_lanes', 'surface=? AND parent_lane_id IS NULL', surface)
-    : nextOrder(db, 'board_lanes', 'parent_lane_id=?', parentLaneId);
+  return nextOrder(parentLaneId == null
+    ? topOrder(db, 'board_lanes', 'surface=? AND parent_lane_id IS NULL', surface)
+    : topOrder(db, 'board_lanes', 'parent_lane_id=?', parentLaneId));
 }
 
 function insertLane(db, { surface, parentLaneId, name, orientation, now }) {
   if (parentLaneId != null) {
     laneOn(db, parentLaneId, surface);
-    if (laneDepth(db, parentLaneId) >= MAX_DEPTH) throw fail('BOARD_DEPTH', `Lanes nest at most ${MAX_DEPTH} deep`);
+    assertDepth(laneDepth(parentLaneId, parentOf(db)) + 1);
   }
   const sortOrder = nextLaneOrder(db, surface, parentLaneId);
   const { lastInsertRowid } = db.prepare(
@@ -365,24 +237,6 @@ function textBody(raw) {
   return body && !body.endsWith('\n') ? `${body}\n` : body;
 }
 
-function imageBuffer(ref) {
-  const s = String(ref || '');
-  const m = /^data:image\/[a-zA-Z0-9+.-]+;base64,(.+)$/.exec(s);
-  if (!m) throw fail('BOARD_BAD_INPUT', 'Image card needs a data URL');
-  const buf = Buffer.from(m[1], 'base64');
-  if (buf.length > 2 * 1024 * 1024) throw fail('BOARD_BAD_INPUT', 'Image is larger than 2 MB');
-  return buf;
-}
-
-function imageFileName(card) {
-  const t = String(card.title || '').trim();
-  if (t && /\.png$/i.test(t) && !/[\\/]/.test(t)) return needName(t);
-  if (t && !/[\\/]/.test(t) && /\.(png|jpe?g|gif|webp)$/i.test(t)) {
-    return needName(t.replace(/\.[^.]+$/, '.png'));
-  }
-  return slugFile(t || 'image', '.png');
-}
-
 function baseName(ref) {
   return String(ref || '').split(/[\\/]/).filter(Boolean).pop() || '';
 }
@@ -450,8 +304,9 @@ async function saveSketch(db, ctx, dest, model) {
       let name;
       let content;
       if (kind === 'image') {
-        name = uniqueName(used(surface), imageFileName(card));
-        content = imageBuffer(card.ref);
+        const image = imageDataUrl(card.ref);
+        name = uniqueName(used(surface), imageFileName(card.title, image.mime));
+        content = Buffer.from(image.base64, 'base64');
         iconKind = 'image';
         if (title == null) title = name;
       } else if (kind === 'file') {
@@ -496,21 +351,11 @@ async function saveSketch(db, ctx, dest, model) {
 }
 
 function tree(db, surface) {
-  const lanes = db.prepare('SELECT * FROM board_lanes WHERE surface=? ORDER BY sort_order, lane_id').all(surface);
-  const cards = db.prepare('SELECT * FROM board_cards WHERE surface=? ORDER BY sort_order, card_id').all(surface);
-  const byId = new Map(lanes.map(l => [l.lane_id, { ...l, lanes: [], cards: [] }]));
-  const floor = [];
-  for (const card of cards) {
-    const viewed = viewCard(card);
-    if (card.lane_id == null) floor.push(viewed);
-    else byId.get(card.lane_id)?.cards.push(viewed);
-  }
-  const roots = [];
-  for (const node of byId.values()) {
-    if (node.parent_lane_id != null && byId.has(node.parent_lane_id)) byId.get(node.parent_lane_id).lanes.push(node);
-    else roots.push(node);
-  }
-  return { surface, lanes: roots, cards: floor };
+  return nestTree(
+    surface,
+    db.prepare('SELECT * FROM board_lanes WHERE surface=? ORDER BY sort_order, lane_id').all(surface),
+    db.prepare('SELECT * FROM board_cards WHERE surface=? ORDER BY sort_order, card_id').all(surface)
+  );
 }
 
 export const plugin = {
@@ -640,16 +485,8 @@ export const plugin = {
       const toParentId = idOrNull(payload.toParentLaneId);
       if (toParentId != null) {
         laneOn(db, toParentId, lane.surface);
-        // Walk the ancestor chain of the destination; hitting the moving lane
-        // (including the destination itself) would make it its own descendant.
-        let cursor = toParentId;
-        while (cursor != null) {
-          if (cursor === lane.lane_id) throw fail('BOARD_CYCLE', 'Cannot move a lane under itself or its own descendant');
-          cursor = mustLane(db, cursor).parent_lane_id;
-        }
-        if (laneDepth(db, toParentId) + subtreeHeight(db, lane.lane_id) > MAX_DEPTH) {
-          throw fail('BOARD_DEPTH', `Lanes nest at most ${MAX_DEPTH} deep`);
-        }
+        assertNoCycle(lane.lane_id, toParentId, parentOf(db));
+        assertDepth(laneDepth(toParentId, parentOf(db)) + subtreeHeight(lane.lane_id, childrenOf(db)));
       }
       db.prepare('UPDATE board_lanes SET parent_lane_id=?, sort_order=? WHERE lane_id=?').run(toParentId, sortOrder, lane.lane_id);
       return mustLane(db, lane.lane_id);
@@ -659,7 +496,7 @@ export const plugin = {
       if (payload.cardId != null) {
         mustCard(db, Number(payload.cardId));
         db.prepare('DELETE FROM board_cards WHERE card_id=?').run(Number(payload.cardId));
-        return { removed: 'card', cardId: Number(payload.cardId), disk: 'left' };
+        return { removed: 'card', cardId: Number(payload.cardId) };
       }
       const lane = mustLane(db, Number(payload.laneId));
       for (const id of laneSubtree(db, lane.lane_id)) {
@@ -669,7 +506,7 @@ export const plugin = {
         }
       }
       db.prepare('DELETE FROM board_lanes WHERE lane_id=?').run(lane.lane_id);
-      return { removed: 'lane', laneId: lane.lane_id, disk: 'left', cards: 'floor' };
+      return { removed: 'lane', laneId: lane.lane_id, cards: 'floor' };
     }
 
     if (action === 'save-to-project') {
@@ -685,7 +522,7 @@ export const plugin = {
         store.createDirectory({ rootPath, dirPath: target, actor: 'human' });
       }
       await saveSketch(db, { store, plugins, rootPath, now }, dest, payload.model);
-      return { destination: dest, name, label: name, ...tree(db, dest) };
+      return { destination: dest, ...tree(db, dest) };
     }
 
     throw new Error(`Unknown board action: ${action}`);
