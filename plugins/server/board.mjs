@@ -258,25 +258,9 @@ export const plugin = {
     if (action === 'rename') {
       const title = String(payload.title || '').trim();
       if (!title) throw fail('BOARD_BAD_INPUT', 'Rename needs a title');
-      if (payload.cardId != null) {
-        mustCard(db, Number(payload.cardId));
-        // A note card's text IS its ref; renaming a note edits the note.
-        db.prepare("UPDATE board_cards SET title=?, ref=CASE WHEN kind='note' THEN ? ELSE ref END WHERE card_id=?")
-          .run(title, title, Number(payload.cardId));
-        return mustCard(db, Number(payload.cardId));
-      }
       mustGroup(db, Number(payload.groupId));
       db.prepare('UPDATE board_groups SET title=? WHERE group_id=?').run(title, Number(payload.groupId));
       return mustGroup(db, Number(payload.groupId));
-    }
-
-    if (action === 'set-color') {
-      // The sticky palette is the whole choice space; null clears back to default.
-      const color = payload.color == null ? null : String(payload.color);
-      if (color != null && !STICKY_COLORS.includes(color)) throw fail('BOARD_BAD_INPUT', `Not a sticky color: ${color}`);
-      mustCard(db, Number(payload.cardId));
-      db.prepare('UPDATE board_cards SET color=? WHERE card_id=?').run(color, Number(payload.cardId));
-      return mustCard(db, Number(payload.cardId));
     }
 
     if (action === 'update-card') {

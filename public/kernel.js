@@ -247,7 +247,7 @@ async function saveFile(content, actor = 'human') {
   return result;
 }
 
-function makeContext(stationId, config, wiringRows = null) {
+function makeContext(stationId, config, wiringRows = null, loc = {}) {
   const offs = [];
   const ctx = {
     get workspace() { return kernel.workspace; },
@@ -276,7 +276,12 @@ function makeContext(stationId, config, wiringRows = null) {
     enabledStationIds: () => enabledStations().map(row => row.plugin_id),
     selectFile, refreshSelection, saveFile,
     notify, esc,
-    onDirty(guard) { kernel.dirtyGuards.push(guard); }
+    onDirty(guard) { kernel.dirtyGuards.push(guard); },
+    async patchConfig(patch) {
+      const next = await saveWiringConfig(stationId, loc.slotName, loc.contributionId, patch);
+      ctx.config = next;
+      return next;
+    }
   };
   return { ctx, dispose: () => offs.forEach(off => off()) };
 }
@@ -326,6 +331,13 @@ function stationButton(row) {
   button.textContent = `${row.manifest.icon || ''} ${row.label}`.trim();
   button.classList.toggle('active', row.plugin_id === kernel.activeStation);
   button.onclick = () => activateStation(row.plugin_id);
+  button.draggable = true;
+  button.addEventListener('dragstart', event => {
+    const json = JSON.stringify({ kind: 'app', station: row.plugin_id, label: row.label });
+    event.dataTransfer.setData('application/x-ro-app', json);
+    event.dataTransfer.setData('text/plain', 'ro-app:' + json);
+    event.dataTransfer.effectAllowed = 'copy';
+  });
   return button;
 }
 
@@ -474,6 +486,7 @@ function renderMissingFrame() {
 }
 
 async function renderEmptyFrame() {
+  stage.replaceChildren();
   stage.className = 'stage layout-main';
   const frame = document.createElement('div');
   if (kernel.workspace) {
@@ -486,7 +499,7 @@ async function renderEmptyFrame() {
     return;
   }
   // No workspace yet. Stations cannot activate, so the launchpad is the
-  // frame (workspaces + programs) and chrome still owns ＋ Workspace.
+  // frame (workspaces only) and chrome still owns ＋ Workspace.
   frame.className = 'empty-frame launchpad-host';
   const host = document.createElement('div');
   const add = document.createElement('button');
@@ -520,21 +533,218 @@ function catalogClient(id) {
   return { contribution_id: id, client_entry: row.client_entry };
 }
 
+function dragHasType(event, type) {
+  return [...(event.dataTransfer?.types || [])].some(t => t.toLowerCase() === type);
+}
+
+function readDrag(event) {
+  const widget = event.dataTransfer.getData('application/x-ro-widget');
+  if (widget) {
+    try { return { kind: 'widget', ...JSON.parse(widget) }; } catch { /* fall through */ }
+  }
+  const plain = event.dataTransfer.getData('text/plain') || '';
+  if (plain.startsWith('ro-widget:')) {
+    try { return { kind: 'widget', ...JSON.parse(plain.slice(10)) }; } catch { return null; }
+  }
+  return null;
+}
+
+function clearDropMarks() {
+  for (const node of stage.querySelectorAll('.drop-before, .drop-after, .drop-slot')) {
+    node.classList.remove('drop-before', 'drop-after', 'drop-slot');
+  }
+}
+
+async function saveWiringConfig(stationId, slotName, contributionId, patch) {
+  if (!stationId || !slotName || !contributionId) throw new Error('Cannot save wiring config');
+  const row = (kernel.composition.stations[stationId] || []).find(
+    r => r.contribution_id === contributionId && r.slot_name === slotName
+  );
+  const config = { ...(row?.config || {}) };
+  for (const [key, value] of Object.entries(patch || {})) {
+    if (key === 'label' && !String(value || '').trim()) delete config.label;
+    else config[key] = value;
+  }
+  await request('/api/composition/station', {
+    method: 'POST',
+    body: JSON.stringify({
+      stationId, slotName, contributionId,
+      sortOrder: row?.sort_order ?? 100,
+      config
+    })
+  });
+  if (row) row.config = config;
+  return config;
+}
+
+async function moveWired({ stationId, contributionId, fromSlot, toSlot, beforeContributionId }) {
+  if (fromSlot === toSlot && contributionId === beforeContributionId) return;
+  await request('/api/composition/station/move', {
+    method: 'POST',
+    body: JSON.stringify({ stationId, contributionId, fromSlot, toSlot, beforeContributionId: beforeContributionId || null })
+  });
+  await recompose();
+}
+
+function bindSlotDrops(stationId, slotEls) {
+  for (const [name, el] of Object.entries(slotEls)) {
+    el.addEventListener('dragover', event => {
+      if (!dragHasType(event, 'application/x-ro-widget')) return;
+      event.preventDefault();
+      el.classList.add('drop-slot');
+    });
+    el.addEventListener('dragleave', event => {
+      if (event.target === el) el.classList.remove('drop-slot');
+    });
+    el.addEventListener('drop', event => {
+      el.classList.remove('drop-slot');
+      const data = readDrag(event);
+      if (data?.kind !== 'widget') return;
+      event.preventDefault();
+      moveWired({
+        stationId: data.stationId || stationId,
+        contributionId: data.contributionId,
+        fromSlot: data.fromSlot,
+        toSlot: name,
+        beforeContributionId: null
+      }).catch(showError);
+    });
+  }
+}
+
+function bindBoxReorder(box, stationId, row) {
+  box.addEventListener('dragover', event => {
+    if (!dragHasType(event, 'application/x-ro-widget')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = box.getBoundingClientRect();
+    const before = event.clientY < rect.top + rect.height / 2;
+    box.classList.toggle('drop-before', before);
+    box.classList.toggle('drop-after', !before);
+    box.parentElement?.classList.remove('drop-slot');
+  });
+  box.addEventListener('dragleave', () => box.classList.remove('drop-before', 'drop-after'));
+  box.addEventListener('drop', event => {
+    if (!dragHasType(event, 'application/x-ro-widget')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const data = readDrag(event);
+    box.classList.remove('drop-before', 'drop-after');
+    if (data?.kind !== 'widget') return;
+    if (data.contributionId === row.contribution_id && data.fromSlot === row.slot_name) return;
+    const rect = box.getBoundingClientRect();
+    const dropBefore = event.clientY < rect.top + rect.height / 2;
+    let beforeContributionId = null;
+    if (dropBefore) beforeContributionId = row.contribution_id;
+    else {
+      const next = box.nextElementSibling;
+      beforeContributionId = next?.dataset?.contribution || null;
+    }
+    moveWired({
+      stationId: data.stationId || stationId,
+      contributionId: data.contributionId,
+      fromSlot: data.fromSlot,
+      toSlot: row.slot_name,
+      beforeContributionId
+    }).catch(showError);
+  });
+}
+
+function mountResizeEdge(box, stationId, slotName, contributionId) {
+  const edge = document.createElement('div');
+  edge.className = 'resize-edge';
+  box.append(edge);
+  edge.addEventListener('mousedown', event => {
+    event.preventDefault();
+    const startY = event.clientY;
+    const startH = box.getBoundingClientRect().height;
+    const move = ev => {
+      const h = Math.max(80, Math.round(startH + ev.clientY - startY));
+      box.style.height = `${h}px`;
+      box.classList.add('has-height');
+    };
+    const up = async ev => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      const h = Math.max(80, Math.round(startH + ev.clientY - startY));
+      box.style.height = `${h}px`;
+      box.classList.add('has-height');
+      try { await saveWiringConfig(stationId, slotName, contributionId, { height: h }); }
+      catch (error) { showError(error); }
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  });
+}
+
 // Slim chrome on every mounted box. Fields come from the wiring row:
 // stationId from activateStation, slotName/contributionId/label from
 // kernel.composition.stations[stationId] (station_contributions JOIN ui_plugins).
 // Contributions write host.innerHTML, so the header lives on the section
-// and the contribution mounts in a child.
-function contributionHeader({ stationId, slotName, contributionId, label }) {
+// and the contribution mounts in a child. Label is config.label or the catalog.
+function contributionHeader({ stationId, slotName, contributionId, label, catalogLabel, box }) {
   const header = document.createElement('div');
   header.className = 'contrib-header';
   header.dataset.station = stationId;
   header.dataset.slot = slotName;
   header.dataset.contribution = contributionId;
-  header.innerHTML = `<span>${esc(label)}</span><button type="button" title="Open plugin manager" aria-label="Open plugin manager">⚙</button>`;
-  header.querySelector('button').addEventListener('click', () => {
-    openPluginManager(stationId);
+
+  const handle = document.createElement('span');
+  handle.className = 'contrib-handle';
+  handle.title = 'Drag to another slot';
+  handle.textContent = '⋮⋮';
+  handle.draggable = true;
+  handle.addEventListener('dragstart', event => {
+    const json = JSON.stringify({ stationId, contributionId, fromSlot: slotName });
+    event.dataTransfer.setData('application/x-ro-widget', json);
+    event.dataTransfer.setData('text/plain', 'ro-widget:' + json);
+    event.dataTransfer.effectAllowed = 'move';
+    box?.classList.add('dragging');
   });
+  handle.addEventListener('dragend', () => {
+    box?.classList.remove('dragging');
+    clearDropMarks();
+  });
+
+  const name = document.createElement('span');
+  name.className = 'contrib-label';
+  name.textContent = label;
+  name.title = 'Double-click to rename';
+  name.addEventListener('dblclick', () => {
+    if (name.isContentEditable) return;
+    const original = name.textContent;
+    name.contentEditable = 'true';
+    name.focus();
+    const finish = async save => {
+      if (!name.isContentEditable) return;
+      name.contentEditable = 'false';
+      name.onkeydown = null;
+      name.onblur = null;
+      if (!save) { name.textContent = original; return; }
+      const next = name.textContent.trim();
+      try {
+        await saveWiringConfig(stationId, slotName, contributionId, { label: next });
+        name.textContent = next || catalogLabel;
+      } catch (error) {
+        showError(error);
+        name.textContent = original;
+      }
+    };
+    name.onkeydown = event => {
+      if (event.key === 'Enter') { event.preventDefault(); finish(true); }
+      if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+    };
+    name.onblur = () => finish(true);
+  });
+
+  const gear = document.createElement('button');
+  gear.type = 'button';
+  gear.title = 'Open plugin manager';
+  gear.setAttribute('aria-label', 'Open plugin manager');
+  gear.textContent = '⚙';
+  gear.addEventListener('click', () => openPluginManager(stationId));
+
+  header.append(handle, name, gear);
   return header;
 }
 
@@ -601,6 +811,7 @@ async function activateStation(stationId) {
   if (slotEls.main && slotEls.side && (layout === 'main-side' || layout === 'rail-main-side')) {
     mountPaneResizer(slotEls);
   }
+  bindSlotDrops(stationId, slotEls);
   // Lifecycle metadata sits at the bottom of the side slot and starts folded —
   // a render-order nudge only; the stored wiring sort_order is untouched.
   const lifecycleLast = new Set(['state-badge', 'provenance-block', 'revision-timeline']);
@@ -610,18 +821,30 @@ async function activateStation(stationId) {
     const slotEl = slotEls[row.slot_name];
     if (!slotEl) continue;
     const section = document.createElement('section');
+    const catalogLabel = row.label;
+    const customLabel = String(row.config?.label || '').trim();
+    section.className = 'section contrib-box';
+    section.dataset.contribution = row.contribution_id;
+    section.dataset.slot = row.slot_name;
+    if (Number.isFinite(row.config?.height)) {
+      section.style.height = `${row.config.height}px`;
+      section.classList.add('has-height');
+    }
     slotEl.append(section);
     section.append(contributionHeader({
       stationId,
       slotName: row.slot_name,
       contributionId: row.contribution_id,
-      label: row.label
+      label: customLabel || catalogLabel,
+      catalogLabel,
+      box: section
     }));
     let host;
     if (row.slot_name === 'side') {
       const remembered = uiMemory.read().sideCollapsed?.[stationId]?.[row.contribution_id];
       const collapsed = remembered ?? lifecycleLast.has(row.contribution_id);
-      section.className = 'section side-section' + (collapsed ? ' collapsed' : '');
+      section.classList.add('side-section');
+      if (collapsed) section.classList.add('collapsed');
       const head = document.createElement('div');
       head.className = 'section-head';
       head.innerHTML = `<span data-caret>${collapsed ? '▸' : '⌄'}</span>`;
@@ -632,21 +855,27 @@ async function activateStation(stationId) {
         uiMemory.patch(s => { ((s.sideCollapsed ??= {})[stationId] ??= {})[row.contribution_id] = next; });
       };
       const body = document.createElement('div');
-      body.className = 'section-body';
+      body.className = 'section-body contrib-body';
       section.append(head, body);
       host = body;
     } else {
       host = document.createElement('div');
+      host.className = 'contrib-body';
       section.append(host);
     }
+    bindBoxReorder(section, stationId, row);
+    mountResizeEdge(section, stationId, row.slot_name, row.contribution_id);
     try {
       const module = await loadModule(row);
-      const { ctx, dispose } = makeContext(stationId, row.config);
+      const { ctx, dispose } = makeContext(stationId, row.config, null, {
+        contributionId: row.contribution_id,
+        slotName: row.slot_name
+      });
       const unmount = await module.mount(host, ctx);
       kernel.disposers.push(() => { if (typeof unmount === 'function') unmount(); dispose(); });
     } catch (error) {
       console.error(`mount ${row.contribution_id}`, error);
-      host.innerHTML = `<div class="card"><h3>${esc(row.label)}</h3><div class="muted">Failed to mount: ${esc(error.message)}</div></div>`;
+      host.innerHTML = `<div class="card"><h3>${esc(customLabel || catalogLabel)}</h3><div class="muted">Failed to mount: ${esc(error.message)}</div></div>`;
     }
   }
   for (const [name, el] of Object.entries(slotEls)) {
@@ -1150,7 +1379,7 @@ function renderCustomize(tab = 'appearance') {
   if (tab === 'dashboard') {
     const links = mergedPrefs().links || [];
     pane.innerHTML = `
-      <div class="muted" style="margin-bottom:8px">The dashboard's content blocks (board, inbox, statistics) are wired in Plugins. Extra launchpad links for THIS workspace live here.</div>
+      <div class="muted" style="margin-bottom:8px">The dashboard's content blocks (board, inbox, statistics) are wired in Plugins. Extra program links for THIS workspace live here; the tool-health service reads them.</div>
       <div data-role="links"></div>
       <div class="pm-add"><input data-role="new-label" placeholder="label (e.g. Extraction app)">
         <input data-role="new-url" class="mono" placeholder="http://127.0.0.1:7860">
