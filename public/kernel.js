@@ -36,7 +36,8 @@ const kernel = {
   dirtyGuards: [],          // contributions veto navigation (unsaved editor text)
   prefs: { user: {}, workspace: {} },  // appearance + navigation preferences
   sidebarSections: [],      // sidebar_sections rows for the current workspace
-  boardPath: []             // board surface folder, one segment per element, from the root
+  boardPath: [],            // board surface folder, one segment per element, from the root
+  run: null                 // execution-state run id the active station was opened on
 };
 
 // -------------------------------------------------------- appearance engine
@@ -161,7 +162,8 @@ function snapshot() {
     ws: kernel.workspace?.root_path || null,
     station: kernel.activeStation || null,
     path: [...(kernel.boardPath || [])].map(String),
-    file: relativeFile(kernel.selection?.path)
+    file: relativeFile(kernel.selection?.path),
+    run: kernel.run || null
   };
 }
 
@@ -172,12 +174,13 @@ function readUrlState() {
     ws: q.get('ws') || null,
     station: q.get('station') || null,
     path: path ? path.split('/').filter(Boolean) : [],
-    file: q.get('file') || null
+    file: q.get('file') || null,
+    run: q.get('run') || null
   };
 }
 
 function urlHasNav(state) {
-  return Boolean(state.ws || state.station || state.path?.length || state.file);
+  return Boolean(state.ws || state.station || state.path?.length || state.file || state.run);
 }
 
 function urlFrom(state) {
@@ -186,6 +189,7 @@ function urlFrom(state) {
   if (state.station) q.set('station', state.station);
   if (state.path?.length) q.set('path', state.path.join('/'));
   if (state.file) q.set('file', state.file);
+  if (state.run) q.set('run', state.run);
   const query = q.toString();
   return location.pathname + (query ? `?${query}` : '');
 }
@@ -194,7 +198,8 @@ function sameNav(a, b) {
   if (!a || !b) return false;
   return a.ws === b.ws && a.station === b.station
     && (a.path || []).join('/') === (b.path || []).join('/')
-    && (a.file || '') === (b.file || '');
+    && (a.file || '') === (b.file || '')
+    && (a.run || '') === (b.run || '');
 }
 
 let skipHistory = false;
@@ -271,6 +276,7 @@ function makeContext(stationId, config, wiringRows = null, loc = {}) {
     get wiring() { return wiringRows || kernel.composition.stations[stationId] || []; },
     activateStation,
     get boardPath() { return kernel.boardPath || []; },
+    get run() { return kernel.run; },
     // Which stations a contribution may offer to open — retired or disabled
     // ids (e.g. an old openIn config naming file-workbench) filter out.
     enabledStationIds: () => enabledStations().map(row => row.plugin_id),
@@ -863,7 +869,9 @@ function mountPaneResizer(slotEls) {
 
 // `path` opens the station on that board surface (Save to project lands on
 // its new folder); without it the surface is whatever the kernel holds.
-async function activateStation(stationId, { path } = {}) {
+// `run` opens it on that execution-state run (a lane's counter); an
+// activation without one has none.
+async function activateStation(stationId, { path, run } = {}) {
   if (navigationBlocked()) return;
   // Guard before tearing anything down: a target station that is not enabled
   // for this workspace must not blank the current view ("Open in X" buttons).
@@ -877,6 +885,7 @@ async function activateStation(stationId, { path } = {}) {
   disposeMounts();
   kernel.activeStation = stationId;
   if (Array.isArray(path)) kernel.boardPath = path.map(String);
+  kernel.run = run == null ? null : String(run);
   if (kernel.workspace) uiMemory.patch(s => { (s.station ??= {})[kernel.workspace.root_path] = stationId; });
   renderStationBar();
   const layout = station.manifest.layout || 'main';
@@ -1555,8 +1564,8 @@ async function applyState(state) {
     const wantWs = state.ws || null;
     const haveWs = kernel.workspace?.root_path || null;
     if (wantWs !== haveWs) await loadWorkspaces(wantWs, { restoreMemory: false, station: state.station });
-    if (state.station && state.station !== kernel.activeStation) {
-      await activateStation(state.station);
+    if (state.station && state.station !== kernel.activeStation || (state.run || null) !== kernel.run) {
+      await activateStation(state.station || kernel.activeStation, { run: state.run });
     } else {
       bus.emit('board-path', { path: kernel.boardPath, source: 'history' });
     }
@@ -1587,7 +1596,7 @@ async function boot() {
     kernel.boardPath = state.path || [];
     await loadWorkspaces(state.ws, { restoreMemory: !fromUrl, station: fromUrl ? state.station : null });
     if (fromUrl) {
-      if (state.station && state.station !== kernel.activeStation) await activateStation(state.station);
+      if (state.station && state.station !== kernel.activeStation || state.run) await activateStation(state.station || kernel.activeStation, { run: state.run });
       else bus.emit('board-path', { path: kernel.boardPath, source: 'history' });
       if (state.file && kernel.workspace) {
         const abs = state.file.startsWith('/') ? state.file : `${kernel.workspace.root_path}/${state.file}`;

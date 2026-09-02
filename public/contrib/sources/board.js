@@ -10,7 +10,10 @@
 // strip under the lowest lane; the sidebar tree's file rows drop in as file
 // cards. Every mutation goes through the board store and the view repaints
 // from 'tree'. config.mode 'whiteboard' keeps the same rows in memory until
-// Save to project.
+// Save to project. A lane runs (▶ in its header): the store seeds an
+// execution-state run from its cards, the header shows the run's step
+// counter read from the state on every load, and the counter opens the
+// Execution state station on that run. Nothing on the whiteboard runs.
 import { styleSticky, paletteEl, stickyKey, isolateStickyPointer, colorForLabel, DEFAULT_STICKY_COLOR } from '../lib/sticky.js';
 import { boardStore } from '../lib/board-store.js';
 import { MAX_DEPTH, LANE_GAP, LANE_MIN_W, LANE_MAX_W, landingSpot } from '../lib/board-rules.js';
@@ -34,6 +37,7 @@ export function open(ctx, config, view) {
   let dragCardId = null;
   let dragLaneId = null;
   let dragGrab = { dx: 0, dy: 0 }; // where inside its box the dragged lane was picked up
+  let runs = {}; // lane_id -> { runId, step, total } for the lanes with a run, read at load
   let canvas = null;
 
   const root = () => ctx.workspace?.root_path;
@@ -548,12 +552,31 @@ export function open(ctx, config, view) {
     }));
     h.appendChild(btn('＋', 'Add a file, folder, link, or note to this lane', () => openAdd(lane)));
     if (depth < MAX_DEPTH) h.appendChild(btn('＋ lane', 'Add a lane inside this lane', () => openNameLane(lane)));
+    if (!isWhiteboard) h.appendChild(runBtn(lane));
     h.appendChild(btn(`⇄ ${lane.orientation}`, `Orientation: ${lane.orientation} (toggle)`, e => {
       e.stopPropagation();
       mutate('set-orientation', { laneId: lane.lane_id, orientation: lane.orientation === 'vertical' ? 'horizontal' : 'vertical' });
     }));
     h.appendChild(laneRemoveBtn(lane));
     return h;
+  }
+
+  // One control per lane: before a run it starts one, after it shows the
+  // step counter and opens the run in the Execution state station.
+  function runBtn(lane) {
+    const run = runs[lane.lane_id];
+    const b = run
+      ? btn('▶ ', 'Open this run in Execution state', e => { e.stopPropagation(); ctx.activateStation('execution-state', { run: run.runId }); })
+      : btn('▶ run', 'Run this lane: its cards in order become the steps of an execution-state run', e => { e.stopPropagation(); mutate('run-lane', { laneId: lane.lane_id }); });
+    b.classList.add('board-lane-run');
+    b.dataset.runId = run ? run.runId : '';
+    if (run) {
+      const counter = document.createElement('span');
+      counter.dataset.role = 'counter';
+      counter.textContent = run.step == null ? 'no state' : `${run.step} / ${run.total}`;
+      b.appendChild(counter);
+    }
+    return b;
   }
 
   function laneEl(lane, depth, cardEl, editorOpen) {
@@ -823,6 +846,11 @@ export function open(ctx, config, view) {
     if (focus) queueMicrotask(() => focus.focus());
   }
 
+  function allLanes(lanes = data.lanes, out = []) {
+    for (const lane of lanes) { out.push(lane); allLanes(lane.lanes, out); }
+    return out;
+  }
+
   async function load() {
     surface = (ctx.boardPath || []).map(String).join('/');
     const [t, s, l, entries] = await Promise.all([
@@ -833,6 +861,9 @@ export function open(ctx, config, view) {
     ]);
     data = t; stickies = s; labels = l;
     listed = entries && new Set(entries.map(e => e.relativePath));
+    const running = allLanes().filter(lane => lane.run_id != null);
+    const states = await Promise.all(running.map(lane => call('lane-run-state', { laneId: lane.lane_id })));
+    runs = Object.fromEntries(running.map((lane, i) => [lane.lane_id, states[i]]));
   }
 
   function onPaste(e) {

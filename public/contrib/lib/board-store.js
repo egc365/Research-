@@ -93,6 +93,9 @@ function writeStorage(key, value) {
 }
 
 function apply(state, action, payload) {
+  if (action === 'run-lane' || action === 'lane-run-state') {
+    throw fail('BOARD_BAD_INPUT', 'The whiteboard has no runs; save it to a project first');
+  }
   const now = () => new Date().toISOString();
   const surface = relPath(payload.surface, 'A surface');
 

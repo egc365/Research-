@@ -6,6 +6,9 @@
 // workspace-relative folder the board is showing, '' for the root. Rows live
 // in <root>/.research-ops/board.sqlite3. Path bytes go through the control
 // store's guarded write (assertInsideWorkspace, create-only, register).
+// A lane runs: run-lane seeds an execution-state run whose steps are the
+// lane's cards in canvas order; the lane row keeps only the run id.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -30,6 +33,7 @@ const SCHEMA = `
     x INTEGER,
     y INTEGER,
     w INTEGER,
+    run_id TEXT,
     sort_order INTEGER NOT NULL DEFAULT 100,
     created_at TEXT NOT NULL
   );
@@ -109,7 +113,8 @@ const LATER_COLUMNS = [
   ['board_lanes', 'slug', "TEXT NOT NULL DEFAULT ''"],
   ['board_lanes', 'x', 'INTEGER'],
   ['board_lanes', 'y', 'INTEGER'],
-  ['board_lanes', 'w', 'INTEGER']
+  ['board_lanes', 'w', 'INTEGER'],
+  ['board_lanes', 'run_id', 'TEXT']
 ];
 
 function addLaterColumns(db) {
@@ -425,6 +430,39 @@ function tree(db, surface) {
   );
 }
 
+// The lane's plan: its own cards, then each child lane's cards, depth-first,
+// in canvas order, so serial and parallel order on the canvas is step order.
+function laneNode(nodes, laneId) {
+  for (const node of nodes) {
+    if (node.lane_id === laneId) return node;
+    const hit = laneNode(node.lanes, laneId);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function planSteps(node, out = []) {
+  for (const card of node.cards) out.push({ card: card.ref, kind: card.kind, status: 'todo' });
+  for (const sub of node.lanes) planSteps(sub, out);
+  return out;
+}
+
+// What the lane header shows. The run is the state; step and total are read
+// from it on every call, null when the state row is gone.
+function laneRun(exec, lane) {
+  const record = exec.getExecutionState(lane.run_id);
+  const state = record?.state;
+  const step = Number(state?.step);
+  return {
+    laneId: lane.lane_id,
+    runId: lane.run_id,
+    step: record ? (Number.isFinite(step) ? step : 0) + 1 : null,
+    total: record ? (Array.isArray(state.steps) ? state.steps.length : 0) : null
+  };
+}
+
+const AGENT_READS = new Set(['tree', 'lane-run-state']);
+
 export const plugin = {
   id: 'board',
   label: 'Board',
@@ -433,11 +471,11 @@ export const plugin = {
   surface: 'main',
   category: 'planning',
   requiresWorkspace: true,
-  description: 'Planning board content: lanes (serial or parallel, no disk entry, placed on a canvas by x, y, w and addressed by slug) and cards (files, folders, links, notes) per surface folder, stored per workspace in .research-ops/board.sqlite3. A file card is a real file and a folder card is a real folder.',
+  description: 'Planning board content: lanes (serial or parallel, no disk entry, placed on a canvas by x, y, w, addressed by slug, runnable as an execution-state run) and cards (files, folders, links, notes) per surface folder, stored per workspace in .research-ops/board.sqlite3. A file card is a real file and a folder card is a real folder.',
   async action({ action, payload, surface: caller, store, plugins }) {
     // Whitelist, not per-action gates: any future mutation defaults to refused.
-    if (caller === 'agent' && action !== 'tree') {
-      throw fail('OWNER_SURFACE_ONLY', 'The board is arranged on the owner surface; agents may only read the tree.');
+    if (caller === 'agent' && !AGENT_READS.has(action)) {
+      throw fail('OWNER_SURFACE_ONLY', 'The board is arranged on the owner surface; agents may only read the tree and a lane\'s run state.');
     }
     const db = boardDb(payload.rootPath);
     const now = () => new Date().toISOString();
@@ -445,6 +483,31 @@ export const plugin = {
     const surface = relPath(payload.surface, 'A surface');
 
     if (action === 'tree') return tree(db, surface);
+
+    if (action === 'lane-run-state') {
+      const lane = laneOn(db, Number(payload.laneId), surface);
+      return lane.run_id == null ? null : laneRun(mustStore(store), lane);
+    }
+
+    // The lane row and the state row are written together: the run id lands
+    // on the lane only if the state seeded.
+    if (action === 'run-lane') {
+      const lane = laneOn(db, Number(payload.laneId), surface);
+      const exec = mustStore(store);
+      if (lane.run_id != null) return { ...laneRun(exec, lane), created: false };
+      const runId = `${lane.slug || 'lane'}-${crypto.randomBytes(4).toString('hex')}`;
+      const steps = planSteps(laneNode(tree(db, surface).lanes, lane.lane_id));
+      db.exec('BEGIN');
+      try {
+        db.prepare('UPDATE board_lanes SET run_id=? WHERE lane_id=?').run(runId, lane.lane_id);
+        exec.initExecutionState({ runId, initial: { board: { surface, lane: lane.slug }, steps, step: 0 } });
+        db.exec('COMMIT');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+      return { ...laneRun(exec, mustLane(db, lane.lane_id)), created: true };
+    }
 
     if (action === 'add-lane') {
       return insertLane(db, {
