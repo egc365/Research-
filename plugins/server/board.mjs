@@ -27,6 +27,10 @@ function boardDb(rootPath) {
       orientation TEXT NOT NULL DEFAULT 'vertical' CHECK(orientation IN ('horizontal','vertical')),
       sort_order INTEGER NOT NULL DEFAULT 100,
       folder_path TEXT,
+      color TEXT,
+      face TEXT,
+      icon TEXT,
+      fields_json TEXT,
       created_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS board_cards (
@@ -36,15 +40,25 @@ function boardDb(rootPath) {
       ref TEXT NOT NULL,
       title TEXT,
       color TEXT,
+      face TEXT,
+      icon TEXT,
+      fields_json TEXT,
       sort_order INTEGER NOT NULL DEFAULT 100,
       created_at TEXT NOT NULL
     );
   `);
-  // Boards written before sticky colors or folder_path existed lack the columns.
+  // Boards written before sticky colors, folder_path, or the two faces existed lack the columns.
   const cardColumns = db.prepare('PRAGMA table_info(board_cards)').all().map(c => c.name);
   if (!cardColumns.includes('color')) db.exec('ALTER TABLE board_cards ADD COLUMN color TEXT');
+  if (!cardColumns.includes('face')) db.exec('ALTER TABLE board_cards ADD COLUMN face TEXT');
+  if (!cardColumns.includes('icon')) db.exec('ALTER TABLE board_cards ADD COLUMN icon TEXT');
+  if (!cardColumns.includes('fields_json')) db.exec('ALTER TABLE board_cards ADD COLUMN fields_json TEXT');
   const groupColumns = db.prepare('PRAGMA table_info(board_groups)').all().map(c => c.name);
   if (!groupColumns.includes('folder_path')) db.exec('ALTER TABLE board_groups ADD COLUMN folder_path TEXT');
+  if (!groupColumns.includes('color')) db.exec('ALTER TABLE board_groups ADD COLUMN color TEXT');
+  if (!groupColumns.includes('face')) db.exec('ALTER TABLE board_groups ADD COLUMN face TEXT');
+  if (!groupColumns.includes('icon')) db.exec('ALTER TABLE board_groups ADD COLUMN icon TEXT');
+  if (!groupColumns.includes('fields_json')) db.exec('ALTER TABLE board_groups ADD COLUMN fields_json TEXT');
   handles.set(root, db);
   return db;
 }
@@ -55,16 +69,86 @@ function fail(code, message) {
   return error;
 }
 
+const NAMED_ICONS = ['file', 'folder', 'note', 'link'];
+const MAX_FIELDS = 4;
+
+function defaultFace(kind) {
+  return kind === 'folder' ? 'sticky' : 'card';
+}
+
+function defaultIcon(kind) {
+  return NAMED_ICONS.includes(kind) ? kind : 'file';
+}
+
+function parseFace(raw, fallback) {
+  if (raw == null || raw === '') return fallback;
+  const face = String(raw);
+  if (face !== 'card' && face !== 'sticky') throw fail('BOARD_BAD_INPUT', `Unknown face: ${face}`);
+  return face;
+}
+
+function parseIcon(raw, fallback) {
+  if (raw == null || raw === '') return fallback;
+  const icon = String(raw);
+  if (NAMED_ICONS.includes(icon)) return icon;
+  if ([...icon].length === 1) return icon;
+  throw fail('BOARD_BAD_INPUT', `Unknown icon: ${icon}`);
+}
+
+function parseFields(payload, existingJson) {
+  if (payload.fields === undefined && payload.fields_json === undefined) {
+    return existingJson ?? '[]';
+  }
+  let arr;
+  if (payload.fields !== undefined) {
+    arr = payload.fields;
+  } else if (payload.fields_json == null || payload.fields_json === '') {
+    arr = [];
+  } else if (typeof payload.fields_json === 'string') {
+    try { arr = JSON.parse(payload.fields_json); }
+    catch { throw fail('BOARD_BAD_INPUT', 'fields_json is not JSON'); }
+  } else {
+    arr = payload.fields_json;
+  }
+  if (!Array.isArray(arr)) throw fail('BOARD_BAD_INPUT', 'fields must be an array');
+  if (arr.length > MAX_FIELDS) throw fail('BOARD_BAD_INPUT', 'A card holds at most four fields');
+  const clean = arr.map(item => {
+    if (!item || typeof item !== 'object') throw fail('BOARD_BAD_INPUT', 'Each field needs a label and a value');
+    return { label: String(item.label ?? ''), value: String(item.value ?? '') };
+  });
+  return JSON.stringify(clean);
+}
+
+function viewCard(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    face: row.face || defaultFace(row.kind),
+    icon: row.icon || defaultIcon(row.kind),
+    fields_json: row.fields_json || '[]'
+  };
+}
+
+function viewGroup(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    face: row.face || 'sticky',
+    icon: row.icon || 'folder',
+    fields_json: row.fields_json || '[]'
+  };
+}
+
 function mustGroup(db, groupId) {
   const row = db.prepare('SELECT * FROM board_groups WHERE group_id=?').get(groupId);
   if (!row) throw fail('BOARD_NOT_FOUND', `No such group: ${groupId}`);
-  return row;
+  return viewGroup(row);
 }
 
 function mustCard(db, cardId) {
   const row = db.prepare('SELECT * FROM board_cards WHERE card_id=?').get(cardId);
   if (!row) throw fail('BOARD_NOT_FOUND', `No such card: ${cardId}`);
-  return row;
+  return viewCard(row);
 }
 
 function mustStore(store) {
@@ -145,8 +229,8 @@ function createBoundGroup(db, { store, rootPath, parentId, title, orientation, n
   ensureFolder(store, rootPath, folder_path);
   const sortOrder = nextOrder(db, 'board_groups', parentId == null ? 'parent_id IS NULL AND ?=1' : 'parent_id=?', parentId == null ? 1 : parentId);
   const { lastInsertRowid } = db.prepare(
-    'INSERT INTO board_groups (parent_id, title, orientation, sort_order, folder_path, created_at) VALUES (?,?,?,?,?,?)'
-  ).run(parentId, title, orientation, sortOrder, folder_path, now());
+    'INSERT INTO board_groups (parent_id, title, orientation, sort_order, folder_path, created_at, face, icon, fields_json) VALUES (?,?,?,?,?,?,?,?,?)'
+  ).run(parentId, title, orientation, sortOrder, folder_path, now(), 'sticky', 'folder', '[]');
   return mustGroup(db, Number(lastInsertRowid));
 }
 
@@ -169,11 +253,12 @@ async function writeNewFile({ store, plugins, rootPath, rel, content }) {
 function tree(db) {
   const groups = db.prepare('SELECT * FROM board_groups ORDER BY sort_order, group_id').all();
   const cards = db.prepare('SELECT * FROM board_cards ORDER BY sort_order, card_id').all();
-  const byId = new Map(groups.map(g => [g.group_id, { ...g, groups: [], cards: [] }]));
+  const byId = new Map(groups.map(g => [g.group_id, { ...viewGroup(g), groups: [], cards: [] }]));
   const rootCards = [];
   for (const card of cards) {
-    if (card.group_id == null) rootCards.push(card);
-    else byId.get(card.group_id)?.cards.push(card);
+    const viewed = viewCard(card);
+    if (card.group_id == null) rootCards.push(viewed);
+    else byId.get(card.group_id)?.cards.push(viewed);
   }
   const roots = [];
   for (const node of byId.values()) {
@@ -243,9 +328,12 @@ export const plugin = {
         if (!ref) throw fail('BOARD_BAD_INPUT', 'A card needs a ref (path, url, or note text)');
       }
 
+      const face = parseFace(payload.face, defaultFace(kind));
+      const icon = parseIcon(payload.icon, defaultIcon(kind));
+      const fields_json = parseFields(payload, '[]');
       const { lastInsertRowid } = db.prepare(
-        'INSERT INTO board_cards (group_id, kind, ref, title, color, sort_order, created_at) VALUES (?,?,?,?,?,?,?)'
-      ).run(groupId, kind, ref, title, color, sortOrder, now());
+        'INSERT INTO board_cards (group_id, kind, ref, title, color, sort_order, created_at, face, icon, fields_json) VALUES (?,?,?,?,?,?,?,?,?,?)'
+      ).run(groupId, kind, ref, title, color, sortOrder, now(), face, icon, fields_json);
       return mustCard(db, Number(lastInsertRowid));
     }
 
@@ -271,6 +359,20 @@ export const plugin = {
     }
 
     if (action === 'update-card') {
+      if (payload.cardId == null && payload.groupId != null) {
+        const group = mustGroup(db, Number(payload.groupId));
+        let color = group.color;
+        if (payload.color !== undefined) {
+          color = payload.color == null ? null : String(payload.color);
+          if (color != null && !STICKY_COLORS.includes(color)) throw fail('BOARD_BAD_INPUT', `Not a sticky color: ${color}`);
+        }
+        const face = parseFace(payload.face, group.face);
+        const icon = parseIcon(payload.icon, group.icon);
+        const fields_json = parseFields(payload, group.fields_json);
+        db.prepare('UPDATE board_groups SET color=?, face=?, icon=?, fields_json=? WHERE group_id=?')
+          .run(color, face, icon, fields_json, group.group_id);
+        return mustGroup(db, group.group_id);
+      }
       const card = mustCard(db, Number(payload.cardId));
       let color = card.color;
       if (payload.color !== undefined) {
@@ -294,8 +396,11 @@ export const plugin = {
           }
         }
       }
-      db.prepare('UPDATE board_cards SET color=?, title=?, ref=? WHERE card_id=?')
-        .run(color, title, ref, card.card_id);
+      const face = parseFace(payload.face, card.face);
+      const icon = parseIcon(payload.icon, card.icon);
+      const fields_json = parseFields(payload, card.fields_json);
+      db.prepare('UPDATE board_cards SET color=?, title=?, ref=?, face=?, icon=?, fields_json=? WHERE card_id=?')
+        .run(color, title, ref, face, icon, fields_json, card.card_id);
       return mustCard(db, card.card_id);
     }
 

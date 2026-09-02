@@ -347,6 +347,77 @@ test('re-creating a group by name adopts the folder left on disk', async t => {
   assert.equal(groups[0].groups[0].cards.length, 0);
 });
 
+test('fields round-trip', async t => {
+  const ws = workspace(t);
+  const g = await act(ws, 'add-group', { title: 'G' });
+  const fields = [{ label: 'owner', value: 'dan' }, { label: 'due', value: 'friday' }];
+  const card = await act(ws, 'add-card', {
+    groupId: g.group_id, kind: 'file', name: 'README.md', fields
+  });
+  assert.deepEqual(JSON.parse(card.fields_json), fields);
+  const updated = await act(ws, 'update-card', {
+    cardId: card.card_id,
+    fields: [{ label: 'owner', value: 'dan' }, { label: 'due', value: 'monday' }]
+  });
+  assert.deepEqual(JSON.parse(updated.fields_json), [
+    { label: 'owner', value: 'dan' }, { label: 'due', value: 'monday' }
+  ]);
+  const { groups } = await act(ws, 'tree');
+  assert.deepEqual(JSON.parse(groups[0].cards[0].fields_json), [
+    { label: 'owner', value: 'dan' }, { label: 'due', value: 'monday' }
+  ]);
+});
+
+test('fifth field refused', async t => {
+  const ws = workspace(t);
+  const g = await act(ws, 'add-group', { title: 'G' });
+  const five = [
+    { label: 'a', value: '1' }, { label: 'b', value: '2' },
+    { label: 'c', value: '3' }, { label: 'd', value: '4' },
+    { label: 'e', value: '5' }
+  ];
+  await assert.rejects(
+    act(ws, 'add-card', { groupId: g.group_id, kind: 'note', ref: 'n', fields: five }),
+    e => e.code === 'BOARD_BAD_INPUT'
+  );
+  const card = await act(ws, 'add-card', {
+    groupId: g.group_id, kind: 'note', ref: 'n',
+    fields: five.slice(0, 4)
+  });
+  await assert.rejects(
+    act(ws, 'update-card', { cardId: card.card_id, fields: five }),
+    e => e.code === 'BOARD_BAD_INPUT'
+  );
+  const { groups } = await act(ws, 'tree');
+  assert.equal(JSON.parse(groups[0].cards[0].fields_json).length, 4);
+});
+
+test('face persists', async t => {
+  const ws = workspace(t);
+  const file = await act(ws, 'add-card', { kind: 'file', name: 'README.md' });
+  assert.equal(file.face, 'card');
+  assert.equal(file.icon, 'file');
+  const note = await act(ws, 'add-card', { kind: 'note', ref: 'hello' });
+  assert.equal(note.face, 'card');
+  assert.equal(note.icon, 'note');
+  const folder = await act(ws, 'add-card', { kind: 'folder', name: 'plans' });
+  assert.equal(folder.face, 'sticky');
+  assert.equal(folder.icon, 'folder');
+  const flipped = await act(ws, 'update-card', { cardId: file.card_id, face: 'sticky', icon: 'P' });
+  assert.equal(flipped.face, 'sticky');
+  assert.equal(flipped.icon, 'P');
+  const folderFlip = await act(ws, 'update-card', { groupId: folder.group_id, face: 'card' });
+  assert.equal(folderFlip.face, 'card');
+  const tree = await act(ws, 'tree');
+  assert.equal(tree.cards.find(c => c.kind === 'file').face, 'sticky');
+  assert.equal(tree.cards.find(c => c.kind === 'file').icon, 'P');
+  assert.equal(tree.groups[0].face, 'card');
+  await assert.rejects(
+    act(ws, 'update-card', { cardId: file.card_id, face: 'back' }),
+    e => e.code === 'BOARD_BAD_INPUT'
+  );
+});
+
 test('unbound group from before folder_path still renders and bind-group writes the folder', async t => {
   const ws = workspace(t);
   const { DatabaseSync } = await import('node:sqlite');

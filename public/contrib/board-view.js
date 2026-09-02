@@ -6,7 +6,8 @@
 // goes through the 'board' service and the whole view repaints from 'tree'.
 import { styleSticky, paletteEl, stickyKey, isolateStickyPointer, colorForLabel, DEFAULT_COLOR } from '/contrib/lib/sticky.js';
 
-const GLYPH = { file: '\u{1F5CE}', link: '\u{1F517}', note: '\u{1F4DD}' };
+const NAMED_ICONS = ['file', 'folder', 'note', 'link'];
+const MAX_FIELDS = 4;
 
 export function mount(el, ctx) {
   let disposed = false;
@@ -25,6 +26,7 @@ export function mount(el, ctx) {
   let data = { groups: [] };
   let stickies = { notes: {} };
   let labels = {};
+  let previews = new Map();
   let editingCardId = null;
   let adding = null; // { groupId: number|null } null groupId is the board floor
   let addKind = 'folder';
@@ -53,12 +55,18 @@ export function mount(el, ctx) {
     editColor = undefined;
   }
 
+  function pathAbs(card) {
+    if (card.kind !== 'file' && card.kind !== 'folder') return '';
+    const r = root();
+    const key = String(card.ref || '');
+    if (!key) return '';
+    return r && !key.startsWith('/') ? `${r}/${key}` : key;
+  }
+
   function resolveColor(card) {
     if (card.color) return card.color;
-    if (card.kind === 'file') {
-      const r = root();
-      const key = String(card.ref || '');
-      const abs = r && key && !key.startsWith('/') ? `${r}/${key}` : key;
+    if (card.kind === 'file' || card.kind === 'folder') {
+      const abs = pathAbs(card);
       const pathLabels = labels[abs] || labels[card.ref] || [];
       return colorForLabel(pathLabels[0]?.label);
     }
@@ -70,30 +78,90 @@ export function mount(el, ctx) {
       const ref = String(card.ref || '');
       return ref.split('/').filter(Boolean).pop() || ref;
     }
+    if (card.kind === 'folder') return card.title || card.ref || '';
     if (card.kind === 'link') {
       try { return new URL(card.ref).host || card.ref; } catch { return card.ref; }
     }
     return String(card.ref || '').split('\n')[0] || '';
   }
 
-  function faceBody(card) {
-    if (card.kind === 'file') {
-      const key = stickyKey(root(), card.ref);
-      return stickies.notes?.[key]?.text || card.title || '';
+  function idLine(card) {
+    if (card.kind === 'file') return card.ref || '';
+    if (card.kind === 'folder') return card.ref || card.title || '';
+    if (card.kind === 'link') {
+      try { return new URL(card.ref).host || card.ref; } catch { return card.ref || ''; }
     }
-    if (card.kind === 'link') return card.title || '';
-    const text = card.ref || '';
-    const i = text.indexOf('\n');
-    return i === -1 ? '' : text.slice(i + 1);
+    return 'note';
   }
 
-  function editValue(card) {
-    if (card.kind === 'file') {
+  function stickyText(card) {
+    if (card.kind === 'file' || card.kind === 'folder') {
       const key = stickyKey(root(), card.ref);
       return stickies.notes?.[key]?.text || '';
     }
     if (card.kind === 'link') return card.title || '';
     return card.ref || '';
+  }
+
+  function noteBody(card) {
+    const text = card.ref || '';
+    const i = text.indexOf('\n');
+    return i === -1 ? '' : text.slice(i + 1);
+  }
+
+  function cardBody(card) {
+    if (card.kind === 'note') return noteBody(card);
+    if (card.kind === 'link') return card.title || '';
+    if (card.kind === 'file') return previews.get(pathAbs(card)) || '';
+    return stickyText(card);
+  }
+
+  function fieldsOf(card) {
+    try {
+      const arr = JSON.parse(card.fields_json || '[]');
+      return Array.isArray(arr) ? arr : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function editValue(card) {
+    return stickyText(card);
+  }
+
+  function folderCard(group) {
+    return {
+      kind: 'folder',
+      card_id: null,
+      group_id: group.group_id,
+      ref: group.folder_path || '',
+      title: group.title,
+      color: group.color,
+      face: group.face || 'sticky',
+      icon: group.icon || 'folder',
+      fields_json: group.fields_json || '[]',
+      group
+    };
+  }
+
+  function persistAppearance(card, patch) {
+    if (card.kind === 'folder') return mutate('update-card', { groupId: card.group_id, ...patch });
+    return mutate('update-card', { cardId: card.card_id, ...patch });
+  }
+
+  function loadPreview(card) {
+    if (card.kind !== 'file') return;
+    const abs = pathAbs(card);
+    if (!abs || previews.has(abs)) return;
+    previews.set(abs, '');
+    ctx.request(`/api/file?root=${encodeURIComponent(root())}&path=${encodeURIComponent(abs)}`)
+      .then(rec => {
+        const text = String(rec.content || '').split('\n').slice(0, 8).join('\n');
+        previews.set(abs, text);
+        const node = el.querySelector(`.board-card[data-kind="file"][data-ref="${CSS.escape(stickyKey(root(), card.ref) || card.ref)}"] .body`);
+        if (node && !node.querySelector('textarea')) node.textContent = text;
+      })
+      .catch(() => {});
   }
 
   function findPath(groups, id, trail = []) {
@@ -208,9 +276,10 @@ export function mount(el, ctx) {
     editColor = undefined;
     editingCardId = null;
     const next = { ...card, color: colorPick !== undefined ? colorPick : card.color };
-    const patch = { cardId: card.card_id };
+    const identity = card.kind === 'folder' ? { groupId: card.group_id } : { cardId: card.card_id };
+    const patch = { ...identity };
     if (colorPick !== undefined) patch.color = colorPick;
-    if (card.kind === 'file') {
+    if (card.kind === 'file' || card.kind === 'folder') {
       const writes = [];
       if (colorPick !== undefined) writes.push(call('update-card', patch));
       const key = stickyKey(root(), card.ref);
@@ -230,73 +299,157 @@ export function mount(el, ctx) {
     call('update-card', patch).then(repaint).catch(error => { ctx.notify(error.message, 'error'); repaint(); });
   }
 
-  function cardEl(card, group) {
-    const c = document.createElement('div');
-    c.className = 'board-card card';
-    c.dataset.kind = card.kind;
-    c.dataset.ref = card.kind === 'file' ? (stickyKey(root(), card.ref) || card.ref) : card.ref;
-    const editing = editingCardId === card.card_id;
-    const shownColor = editing && editColor !== undefined ? editColor : card.color;
-    styleSticky(c, resolveColor({ ...card, color: shownColor }));
-    c.draggable = !editorOpen();
-    if (editing) c.draggable = false;
-    c.addEventListener('dragstart', e => {
+  function flipEl(card) {
+    const flip = document.createElement('span');
+    flip.className = 'flip';
+    flip.title = card.face === 'sticky' ? 'Show card face' : 'Show sticky face';
+    flip.onclick = e => {
       e.stopPropagation();
-      if (editorOpen()) { e.preventDefault(); return; }
-      dragCardId = card.card_id;
-    });
-    c.addEventListener('dragend', () => { dragCardId = null; });
-    acceptDrag(c);
-    c.addEventListener('drop', e => {
-      e.preventDefault(); e.stopPropagation();
-      if (dragGroupId != null) { dropGroup(group); return; } // a group dropped on a card nests in the card's group
-      dropCard(group, card);
-    });
+      const next = card.face === 'sticky' ? 'card' : 'sticky';
+      const host = flip.closest('.board-card');
+      let done = false;
+      const go = () => { if (done) return; done = true; persistAppearance(card, { face: next }); };
+      if (!host) return go();
+      host.style.animation = 'board-card-flip .25s ease';
+      host.addEventListener('animationend', go, { once: true });
+      setTimeout(go, 300);
+    };
+    return flip;
+  }
 
-    const glyph = document.createElement('span');
-    glyph.className = 'board-card-glyph';
-    glyph.textContent = GLYPH[card.kind] || '';
+  function bindEl(card) {
+    if (card.kind !== 'folder' || card.ref) return null;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'bind';
+    b.textContent = 'bind to folder';
+    b.onclick = e => {
+      e.stopPropagation();
+      mutate('bind-group', { groupId: card.group_id });
+    };
+    return b;
+  }
 
-    let title;
-    if (card.kind === 'link') {
-      title = document.createElement('a');
-      title.href = card.ref;
-      title.target = '_blank';
-      title.rel = 'noopener';
-    } else {
-      title = document.createElement('span');
-    }
-    title.className = 'board-card-title';
-    title.textContent = faceTitle(card);
-
-    if (card.kind === 'file') {
-      const select = e => {
-        e.stopPropagation();
-        ctx.selectFile(card.ref).catch(error => ctx.notify(error.message, 'error'));
+  function iconPicker(card) {
+    const wrap = document.createElement('span');
+    wrap.className = 'icon';
+    wrap.dataset.icon = card.icon || card.kind;
+    wrap.textContent = card.icon || card.kind;
+    isolateStickyPointer(wrap);
+    wrap.onclick = e => {
+      e.stopPropagation();
+      if (wrap.querySelector('.icon-picker')) {
+        wrap.querySelector('.icon-picker').remove();
+        wrap.textContent = card.icon || card.kind;
+        return;
+      }
+      wrap.textContent = '';
+      const picker = document.createElement('span');
+      picker.className = 'icon-picker';
+      for (const name of NAMED_ICONS) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = name;
+        b.onclick = ev => { ev.stopPropagation(); persistAppearance(card, { icon: name }); };
+        picker.appendChild(b);
+      }
+      const custom = document.createElement('input');
+      custom.type = 'text';
+      custom.maxLength = 2;
+      custom.placeholder = '★';
+      custom.onkeydown = ev => {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          const v = custom.value.trim();
+          if ([...v].length !== 1) { ctx.notify('Icon is one of file, folder, note, link, or a single character', 'error'); return; }
+          persistAppearance(card, { icon: v });
+        }
+        if (ev.key === 'Escape') { ev.preventDefault(); paint(); }
       };
-      const open = e => {
-        e.preventDefault();
-        e.stopPropagation();
-        ctx.selectFile(card.ref)
-          .then(() => ctx.activateStation('revision-center'))
-          .catch(error => ctx.notify(error.message, 'error'));
-      };
-      c.addEventListener('click', e => {
-        if (e.target.closest('.board-card-body, .board-card-palette')) return;
-        select(e);
-      });
-      c.addEventListener('dblclick', e => {
-        if (e.target.closest('.board-card-body, .board-card-palette')) return;
-        open(e);
-      });
+      picker.appendChild(custom);
+      wrap.appendChild(picker);
+      custom.focus();
+    };
+    return wrap;
+  }
+
+  function tagsEl(card) {
+    const row = document.createElement('div');
+    row.className = 'tags';
+    isolateStickyPointer(row);
+    const abs = pathAbs(card);
+    const pathLabels = abs ? (labels[abs] || labels[card.ref] || []) : [];
+    for (const a of pathLabels) {
+      const chip = document.createElement('span');
+      chip.className = 'label-chip';
+      chip.style.borderColor = a.color;
+      chip.style.color = a.color;
+      chip.textContent = a.label;
+      row.appendChild(chip);
     }
+    if (abs) {
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.className = 'tag-add';
+      add.textContent = '＋ tag';
+      add.onclick = e => {
+        e.stopPropagation();
+        ctx.bus.emit('open-labels', { path: abs });
+      };
+      row.appendChild(add);
+    }
+    return row;
+  }
 
-    c.append(glyph, title);
+  function fieldsEl(card) {
+    const row = document.createElement('div');
+    row.className = 'fields';
+    isolateStickyPointer(row);
+    const fields = fieldsOf(card);
+    for (const field of fields) {
+      const item = document.createElement('span');
+      item.className = 'field';
+      item.textContent = `${field.label}: ${field.value}`;
+      row.appendChild(item);
+    }
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'field-add';
+    add.textContent = '＋ field';
+    add.onclick = e => {
+      e.stopPropagation();
+      if (fields.length >= MAX_FIELDS) {
+        ctx.notify('A card holds at most four fields', 'error');
+        return;
+      }
+      const form = document.createElement('span');
+      form.className = 'field-new';
+      const lab = document.createElement('input');
+      lab.placeholder = 'label';
+      const val = document.createElement('input');
+      val.placeholder = 'value';
+      const save = () => {
+        const label = lab.value.trim();
+        const value = val.value.trim();
+        if (!label && !value) { paint(); return; }
+        persistAppearance(card, { fields: [...fields, { label, value }] });
+      };
+      lab.onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); val.focus(); } if (ev.key === 'Escape') { ev.preventDefault(); paint(); } };
+      val.onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); save(); } if (ev.key === 'Escape') { ev.preventDefault(); paint(); } };
+      val.onblur = () => { if (form.isConnected) save(); };
+      form.append(lab, val);
+      add.replaceWith(form);
+      lab.focus();
+    };
+    row.appendChild(add);
+    return row;
+  }
 
+  function stickyTextEl(card) {
     const body = document.createElement('div');
-    body.className = 'board-card-body';
+    body.className = 'text';
     isolateStickyPointer(body);
-
+    const editing = editingCardId === (card.kind === 'folder' ? `g${card.group_id}` : card.card_id);
     if (editing) {
       const area = document.createElement('textarea');
       area.rows = 3;
@@ -322,28 +475,153 @@ export function mount(el, ctx) {
       };
       body.appendChild(area);
     } else {
-      body.textContent = faceBody(card);
-      body.onclick = () => { stopEditing(); editingCardId = card.card_id; paint(); };
+      body.textContent = stickyText(card);
+      body.onclick = () => {
+        stopEditing();
+        editingCardId = card.kind === 'folder' ? `g${card.group_id}` : card.card_id;
+        paint();
+      };
     }
-    c.appendChild(body);
+    return body;
+  }
 
+  function openEl(card) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'open';
+    b.textContent = 'open';
+    b.onclick = e => {
+      e.stopPropagation();
+      const found = findPath(data.groups, card.group_id);
+      crumb = found ? found.trail : [];
+      emitPath();
+      paint();
+    };
+    return b;
+  }
+
+  function paletteWrap(card) {
     const palWrap = document.createElement('div');
     palWrap.className = 'board-card-palette';
     isolateStickyPointer(palWrap);
+    const identity = card.kind === 'folder' ? { groupId: card.group_id } : { cardId: card.card_id };
+    const editing = editingCardId === (card.kind === 'folder' ? `g${card.group_id}` : card.card_id);
     const mountPalette = () => {
       const current = editing && editColor !== undefined ? editColor : card.color;
       palWrap.replaceChildren(paletteEl(current, color => {
-        if (editingCardId === card.card_id) {
+        if (editing) {
           editColor = color;
-          c.style.background = resolveColor({ ...card, color });
           mountPalette();
           return;
         }
-        mutate('update-card', { cardId: card.card_id, color });
-      }), removeBtn('card', card.card_id, 'Remove card'));
+        mutate('update-card', { ...identity, color });
+      }));
+      if (card.kind === 'folder') palWrap.appendChild(removeBtn('group', card.group_id, 'Remove group from the board. The folder stays on disk.'));
+      else palWrap.appendChild(removeBtn('card', card.card_id, 'Remove card'));
     };
     mountPalette();
-    c.appendChild(palWrap);
+    return palWrap;
+  }
+
+  const FACES = {
+    sticky: card => {
+      const inner = document.createDocumentFragment();
+      inner.append(iconPicker(card), stickyTextEl(card));
+      const bind = bindEl(card);
+      if (bind) inner.appendChild(bind);
+      if (card.kind === 'folder') inner.appendChild(openEl(card));
+      inner.append(flipEl(card), paletteWrap(card));
+      return inner;
+    },
+    card: card => {
+      const inner = document.createDocumentFragment();
+      const id = document.createElement('div');
+      id.className = 'id';
+      if (card.kind === 'link') {
+        const a = document.createElement('a');
+        a.href = card.ref;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = idLine(card);
+        id.appendChild(a);
+      } else {
+        id.textContent = idLine(card);
+      }
+      const title = document.createElement('div');
+      title.className = 'title';
+      title.textContent = faceTitle(card);
+      const body = document.createElement('div');
+      body.className = 'body';
+      body.textContent = cardBody(card);
+      inner.append(id, title, tagsEl(card), fieldsEl(card), body);
+      const bind = bindEl(card);
+      if (bind) inner.appendChild(bind);
+      if (card.kind === 'folder') inner.appendChild(openEl(card));
+      inner.append(flipEl(card), paletteWrap(card));
+      if (card.kind === 'file') loadPreview(card);
+      return inner;
+    }
+  };
+
+  function cardEl(card, group) {
+    const c = document.createElement('div');
+    const face = card.face === 'sticky' ? 'sticky' : 'card';
+    c.className = 'board-card card' + (face === 'sticky' ? ' sticky' : '');
+    c.dataset.kind = card.kind;
+    c.dataset.face = face;
+    c.dataset.icon = card.icon || card.kind;
+    if (card.kind === 'file') c.dataset.ref = stickyKey(root(), card.ref) || card.ref;
+    else if (card.kind === 'folder') {
+      c.dataset.groupId = String(card.group_id);
+      if (card.ref) c.dataset.folder = card.ref;
+    } else c.dataset.ref = card.ref;
+    const editing = editingCardId === (card.kind === 'folder' ? `g${card.group_id}` : card.card_id);
+    const shownColor = editing && editColor !== undefined ? editColor : card.color;
+    if (face === 'sticky') styleSticky(c, resolveColor({ ...card, color: shownColor }));
+    c.draggable = !editorOpen();
+    if (editing) c.draggable = false;
+    c.addEventListener('dragstart', e => {
+      e.stopPropagation();
+      if (editorOpen()) { e.preventDefault(); return; }
+      if (card.kind === 'folder') dragGroupId = card.group_id;
+      else dragCardId = card.card_id;
+    });
+    c.addEventListener('dragend', () => { dragCardId = null; dragGroupId = null; });
+    acceptDrag(c);
+    c.addEventListener('drop', e => {
+      e.preventDefault(); e.stopPropagation();
+      if (card.kind === 'folder') {
+        if (dragGroupId != null) { dropGroup(card.group); return; }
+        dropCard(card.group, null);
+        return;
+      }
+      if (dragGroupId != null) { dropGroup(group); return; }
+      dropCard(group, card);
+    });
+
+    if (card.kind === 'file') {
+      const select = e => {
+        e.stopPropagation();
+        ctx.selectFile(card.ref).catch(error => ctx.notify(error.message, 'error'));
+      };
+      const open = e => {
+        e.preventDefault();
+        e.stopPropagation();
+        ctx.selectFile(card.ref)
+          .then(() => ctx.activateStation('revision-center'))
+          .catch(error => ctx.notify(error.message, 'error'));
+      };
+      c.addEventListener('click', e => {
+        if (e.target.closest('.text, .body, .fields, .tags, .flip, .icon, .open, .board-card-palette')) return;
+        select(e);
+      });
+      c.addEventListener('dblclick', e => {
+        if (e.target.closest('.text, .body, .fields, .tags, .flip, .icon, .open, .board-card-palette')) return;
+        open(e);
+      });
+    }
+
+    c.appendChild(FACES[face](card));
     return c;
   }
 
@@ -523,7 +801,7 @@ export function mount(el, ctx) {
     const horizontal = group.orientation === 'horizontal';
     const body = div(`display:flex;flex-direction:${horizontal ? 'row' : 'column'};align-items:${horizontal ? 'flex-start' : 'stretch'};flex-wrap:${horizontal ? 'wrap' : 'nowrap'};padding:4px;min-height:40px`);
     body.className = 'cards';
-    for (const sub of group.groups) body.appendChild(groupEl(sub, depth + 1));
+    for (const sub of group.groups) body.appendChild(cardEl(folderCard(sub), sub));
     for (const card of group.cards) body.appendChild(cardEl(card, group));
     if (adding && adding.groupId === group.group_id) body.appendChild(addFormEl(group, depth));
     if (!group.groups.length && !group.cards.length && !(adding && adding.groupId === group.group_id)) {
@@ -536,24 +814,6 @@ export function mount(el, ctx) {
       dropCard(group, null);
     });
     return body;
-  }
-
-  function groupEl(group, depth) {
-    const tile = div('border:1px solid #3a3a3a;border-radius:8px;margin:6px;background:#1f1f23;min-width:180px;flex:0 1 auto');
-    tile.className = 'board-group group';
-    tile.dataset.groupId = String(group.group_id);
-    tile.dataset.orientation = group.orientation;
-    if (group.folder_path) tile.dataset.folder = group.folder_path;
-    tile.draggable = !editorOpen();
-    tile.addEventListener('dragstart', e => {
-      e.stopPropagation();
-      if (editorOpen()) { e.preventDefault(); return; }
-      dragGroupId = group.group_id;
-    });
-    tile.addEventListener('dragend', () => { dragGroupId = null; });
-    tile.appendChild(headerEl(group, depth));
-    tile.appendChild(bodyEl(group, depth));
-    return tile;
   }
 
   function breadcrumbEl() {
@@ -597,7 +857,8 @@ export function mount(el, ctx) {
     } else {
       el.appendChild(breadcrumbEl());
       const top = div('display:flex;flex-direction:row;flex-wrap:wrap;align-items:flex-start;min-height:60px');
-      for (const g of data.groups) top.appendChild(groupEl(g, 1));
+      top.className = 'cards';
+      for (const g of data.groups) top.appendChild(cardEl(folderCard(g), g));
       for (const card of data.cards || []) top.appendChild(cardEl(card, { group_id: null, cards: data.cards, groups: data.groups }));
       acceptDrag(top);
       top.addEventListener('drop', e => { e.preventDefault(); if (dragGroupId != null) dropGroup(null); });
@@ -636,8 +897,10 @@ export function mount(el, ctx) {
     stopEditing();
     pendingRemove = null;
     clearTimeout(removeTimer);
+    previews = new Map();
     repaint();
   });
+  ctx.bus.on('labels-changed', () => { if (!disposed) repaint(); });
   repaint();
   return () => { disposed = true; clearTimeout(removeTimer); };
 }
