@@ -91,6 +91,7 @@ export const contributions = [
   { id: 'decision-controls',  label: 'Decision controls',  entry: '/contrib/decision-controls.js',  description: 'Accept / needs-more-work on the selected card. Record-only owner verdicts; promotion deliberately lives elsewhere.' },
   { id: 'revision-timeline',  label: 'Timeline',           entry: '/contrib/revision-timeline.js',  description: 'Amendments and ledger events for the selected file, newest first.' },
   { id: 'actor-filter',       label: 'Actor filter',       entry: '/contrib/actor-filter.js',       description: 'Narrow event views to one actor (human, agent, filesystem, validator).' },
+  { id: 'activity-view',      label: 'Activity',           entry: '/contrib/activity.js',           description: 'Workspace ledger activity, newest first. Honors the actor-filter contribution on the same station.' },
   { id: 'provenance-block',   label: 'Provenance',         entry: '/contrib/provenance-block.js',   description: 'Registry row for the selected file: state, exact SHA-256, run and span ids, timestamps.' },
   { id: 'state-badge',        label: 'State badge',        entry: '/contrib/state-badge.js',        description: 'The lifecycle state of the selected file, colored, with its allowed next states.' },
   { id: 'promotion-control',  label: 'Validation controls', entry: '/contrib/promotion-control.js', description: 'Submit as candidate → run validation (mints receipts) → Promote. Promote is the single final verb: validated bytes to promoted authority, human-only.' },
@@ -100,7 +101,7 @@ export const contributions = [
   { id: 'label-editor',      label: 'Label editor',       entry: '/contrib/label-editor.js',       headless: true, description: 'Manage labels in a dialog opened from the tree (create, rename, recolor, describe, delete, assign) — stored in the SQLite crosswalk, owner-only writes. Occupies no screen space until opened.' },
   { id: 'launchpad',          label: 'Launchpad',          entry: '/contrib/launchpad.js',          description: 'Shown before a workspace is chosen: workspaces to enter. Still wireable into any station; the dashboard no longer mounts it by default.' },
   { id: 'apps-widget',        label: 'Apps',               entry: '/contrib/apps-widget.js',        description: 'A box the owner names and fills with station chips and links. Nothing is pre-grouped; items live in the wiring config.' },
-  { id: 'inbox',              label: 'Inbox',              entry: '/contrib/inbox.js',              description: 'What needs the owner: candidates and validated artifacts awaiting a verdict, plus the latest activity.' },
+  { id: 'inbox',              label: 'Inbox',              entry: '/contrib/inbox.js',              description: 'What needs the owner: candidates and validated artifacts awaiting a verdict. Point it at a folder with the workspace inbox preference { watch: \'outputs\' }, or the same key on a wiring row; the default watches nothing.' },
   { id: 'folder-cards',       label: 'Folder cards',       entry: '/contrib/folder-cards.js',       description: 'Notion-style card view of a folder (the workspace root by default): one card per file or folder, with label chips.' },
   { id: 'section-favorites',  label: 'Favorites',          entry: '/contrib/section-favorites.js',  description: 'Sidebar section: starred files and folders (star them in the tree).' },
   { id: 'section-projects',   label: 'Projects',           entry: '/contrib/section-projects.js',   description: 'Sidebar section: folders labeled ‘project’, nested, click to reveal in Files.' },
@@ -137,7 +138,7 @@ export const defaultWiring = {
   },
   'dashboard-viewer': { main: ['board-view', 'apps-widget'] },
   'provenance-viewer': {
-    main: ['revision-timeline'],
+    main: ['revision-timeline', 'activity-view'],
     side: ['actor-filter', 'provenance-block']
   },
   'execution-state': { main: ['execution-state-view'] },
@@ -159,7 +160,8 @@ export const retired = ['label-designator', 'governance-center', 'file-workbench
 export const wiringAdditions = [
   { id: '20260902-board-on-dashboard', stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'board-view', sortOrder: 15 },
   { id: '20260902-trace-lanes-on-transcript-review', stationId: 'transcript-review', slotName: 'main', contributionId: 'trace-lanes-view', sortOrder: 20 },
-  { id: '20260902-apps-widget-on-dashboard', stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'apps-widget', sortOrder: 20 }
+  { id: '20260902-apps-widget-on-dashboard', stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'apps-widget', sortOrder: 20 },
+  { id: '20260902-activity-on-provenance', stationId: 'provenance-viewer', slotName: 'main', contributionId: 'activity-view', sortOrder: 20 }
 ];
 
 // One-shot wiring removals for stations that already have owner rows (the

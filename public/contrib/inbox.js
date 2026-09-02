@@ -1,47 +1,97 @@
-// Contribution: Inbox — what needs the owner. Candidates and validated
-// artifacts waiting for a decision, then the last few registry events.
-// Clicking a waiting row selects the file and jumps to the validation
-// center (the kernel refuses gracefully when that station is not enabled).
+// Contribution: Inbox. Only items that need the owner's verdict.
+// Candidates and validated artifacts, grouped by workspace. A watch folder
+// (ctx.config.watch, workspace-relative; default none) lists files not yet
+// registered, with a one-click register-as-candidate. Activity lives elsewhere.
 export function mount(el, ctx) {
-  async function paint() {
-    if (!ctx.workspace) { el.innerHTML = '<div class="empty">No workspace.</div>'; return; }
-    const rootPath = ctx.workspace.root_path;
-    const [rows, recent] = await Promise.all([
-      ctx.action('registry', 'list', { rootPath }),
-      ctx.action('registry', 'recent', { rootPath, limit: 5 })
-    ]);
-    el.innerHTML = '<div class="card"><h3>Inbox</h3><div data-role="waiting"></div><div data-role="recent"></div></div>';
+  function ageLabel(iso) {
+    const then = Date.parse(iso);
+    if (!Number.isFinite(then)) return '';
+    const min = Math.max(0, Math.round((Date.now() - then) / 60000));
+    if (min < 60) return `${min} min`;
+    const hours = Math.round(min / 60);
+    if (hours < 48) return `${hours} h`;
+    return `${Math.round(hours / 24)} d`;
+  }
 
-    const waiting = el.querySelector('[data-role="waiting"]');
-    const pending = rows.filter(row => row.state === 'candidate')
-      .concat(rows.filter(row => row.state === 'validated'));
-    if (!pending.length) {
-      waiting.innerHTML = '<div class="muted">Nothing waiting on you.</div>';
-    } else {
-      for (const row of pending) {
+  async function paint() {
+    const watch = String(ctx.config?.watch || '').trim();
+    const root = ctx.workspace?.root_path || '';
+    const qs = new URLSearchParams();
+    if (root) qs.set('root', root);
+    if (watch) qs.set('watch', watch);
+    const data = await ctx.request(`/api/inbox?${qs}`);
+    const verdicts = data.verdicts || [];
+    const unregistered = data.unregistered || [];
+    el.replaceChildren();
+
+    if (!verdicts.length && !unregistered.length) {
+      el.innerHTML = '<div class="muted">Nothing waiting on you.</div>';
+      return;
+    }
+
+    const groups = new Map();
+    for (const row of verdicts) {
+      const key = row.workspace_root;
+      if (!groups.has(key)) groups.set(key, { label: row.workspace_label || key, rows: [] });
+      groups.get(key).rows.push(row);
+    }
+    for (const group of groups.values()) {
+      const head = document.createElement('div');
+      head.className = 'muted inbox-group';
+      head.textContent = `workspace ${group.label}`;
+      el.append(head);
+      for (const row of group.rows) {
         const item = document.createElement('div');
         item.className = 'side-row';
+        const open = document.createElement('button');
+        open.type = 'button';
+        open.textContent = 'open in Validation center';
+        open.onclick = event => {
+          event.stopPropagation();
+          ctx.selectFile(row.path)
+            .then(() => ctx.activateStation('validation-center'))
+            .catch(e => ctx.notify(e.message, 'error'));
+        };
         item.innerHTML = `
-          <span class="grow" title="${ctx.esc(row.path)}">${ctx.esc(row.path.replace(rootPath + '/', ''))}</span>
+          <span class="grow" title="${ctx.esc(row.path)}">${ctx.esc(row.relativePath || row.path)}</span>
           <span class="badge ${ctx.esc(row.state)}">${ctx.esc(row.state)}</span>
-          <span class="aux mono">${ctx.esc((row.checksum || '').slice(0, 12))}</span>`;
-        item.onclick = () => ctx.selectFile(row.path)
-          .then(() => ctx.activateStation('validation-center'))
-          .catch(e => ctx.notify(e.message, 'error'));
-        waiting.append(item);
+          <span class="aux">${ctx.esc(ageLabel(row.updated_at))}</span>`;
+        item.append(open);
+        el.append(item);
       }
     }
 
-    const activity = el.querySelector('[data-role="recent"]');
-    activity.innerHTML = '<div class="muted">Recent activity</div>';
-    for (const event of (recent || []).slice(0, 5)) {
-      const item = document.createElement('div');
-      item.className = 'side-row';
-      item.innerHTML = `
-        <span class="grow">${ctx.esc((event.path || '').split('/').pop())}</span>
-        <span class="aux">${ctx.esc(event.event_type + ' · ' + event.actor)}</span>`;
-      item.onclick = () => ctx.selectFile(event.path).catch(e => ctx.notify(e.message, 'error'));
-      activity.append(item);
+    if (watch) {
+      const head = document.createElement('div');
+      head.className = 'muted inbox-group';
+      head.textContent = `${watch}, not yet registered`;
+      el.append(head);
+      if (!unregistered.length) {
+        const empty = document.createElement('div');
+        empty.className = 'muted';
+        empty.textContent = 'Nothing unregistered in this folder.';
+        el.append(empty);
+      }
+      for (const file of unregistered) {
+        const item = document.createElement('div');
+        item.className = 'side-row';
+        const register = document.createElement('button');
+        register.type = 'button';
+        register.textContent = 'register as candidate';
+        register.onclick = async event => {
+          event.stopPropagation();
+          try {
+            await ctx.request(`/api/file?root=${encodeURIComponent(root)}&path=${encodeURIComponent(file.path)}`);
+            await ctx.action('governance', 'transition', { path: file.path, toState: 'candidate', actor: 'human' });
+            ctx.bus.emit('artifact-changed', { path: file.path, state: 'candidate' });
+          } catch (error) {
+            ctx.notify(error.message, 'error');
+          }
+        };
+        item.innerHTML = `<span class="grow" title="${ctx.esc(file.path)}">${ctx.esc(file.relativePath || file.name)}</span>`;
+        item.append(register);
+        el.append(item);
+      }
     }
   }
   const repaint = () => paint().catch(e => ctx.notify(e.message, 'error'));

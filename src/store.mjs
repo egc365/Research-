@@ -890,6 +890,12 @@ export class ControlStore {
       && (v.width === undefined || (Number.isFinite(v.width) && v.width >= 180 && v.width <= 560))
       && (v.collapsed === undefined || typeof v.collapsed === 'boolean'),
     paneSplit: v => Number.isFinite(v) && v >= 20 && v <= 80,
+    inbox: v => v && typeof v === 'object' && !Array.isArray(v)
+      && (v.watch === undefined || v.watch === '' || (
+        typeof v.watch === 'string'
+        && v.watch.length <= 256
+        && !v.watch.split(/[\\/]/).includes('..')
+      )),
     dashboard: v => v && typeof v === 'object' && !Array.isArray(v),
     favorites: v => Array.isArray(v) && v.every(x => typeof x === 'string'),
     order: v => v && typeof v === 'object' && !Array.isArray(v)
@@ -1058,16 +1064,75 @@ export class ControlStore {
     return { purged: entries.length };
   }
 
-  recentActivity(rootPath, limit = 12) {
+  recentActivity(rootPath, limit = 12, actor = null) {
+    const root = path.resolve(rootPath);
+    const trash = path.join(root, '.research-ops');
     return this.db.prepare(`
       SELECT e.path, MAX(e.event_id) AS last_event, e.event_type, e.actor, e.created_at
       FROM artifact_events e
       JOIN artifact_registry r ON r.path = e.path
-      WHERE r.workspace_root = ? AND r.path NOT LIKE ? || '/%'
+      WHERE r.workspace_root = ? AND r.path NOT LIKE ? || '/%' AND (? IS NULL OR e.actor = ?)
       GROUP BY e.path
       ORDER BY last_event DESC
       LIMIT ?
-    `).all(path.resolve(rootPath), path.join(path.resolve(rootPath), '.research-ops'), limit);
+    `).all(root, trash, actor, actor, limit);
+  }
+
+  // Artifacts waiting on the owner: candidate (review) or validated (Promote).
+  verdictCount(rootPath = null) {
+    if (rootPath) {
+      const row = this.db.prepare(
+        "SELECT COUNT(*) AS n FROM artifact_registry WHERE workspace_root=? AND state IN ('candidate','validated')"
+      ).get(path.resolve(rootPath));
+      return Number(row.n);
+    }
+    const row = this.db.prepare(
+      "SELECT COUNT(*) AS n FROM artifact_registry WHERE state IN ('candidate','validated')"
+    ).get();
+    return Number(row.n);
+  }
+
+  listVerdicts() {
+    const rows = this.db.prepare(`
+      SELECT r.path, r.state, r.checksum, r.workspace_root, r.updated_at, w.label AS workspace_label
+      FROM artifact_registry r
+      JOIN workspace_roots w ON w.root_path = r.workspace_root
+      WHERE r.state IN ('candidate','validated')
+      ORDER BY w.label, r.workspace_root, CASE r.state WHEN 'candidate' THEN 0 ELSE 1 END, r.path
+    `).all();
+    return rows.map(row => ({
+      ...row,
+      relativePath: path.relative(row.workspace_root, row.path)
+    }));
+  }
+
+  listUnregisteredWatch(rootPath, watch) {
+    if (!watch || typeof watch !== 'string') return [];
+    const trimmed = watch.replace(/^[/\\]+/, '').replace(/[/\\]+$/, '');
+    if (!trimmed || trimmed.split(/[\\/]/).includes('..')) return [];
+    const root = path.resolve(rootPath);
+    let folder;
+    try {
+      folder = this.assertInsideWorkspace(root, path.join(root, trimmed));
+    } catch {
+      return [];
+    }
+    if (!fs.existsSync(folder) || !fs.statSync(folder).isDirectory()) return [];
+    const registered = new Set(
+      this.db.prepare('SELECT path FROM artifact_registry WHERE workspace_root=?').all(root).map(r => r.path)
+    );
+    const entries = this.listDirectory(rootPath, trimmed);
+    const listed = [];
+    for (const entry of entries) {
+      if (entry.type === 'file' && !registered.has(entry.path)) listed.push(entry);
+    }
+    for (const entry of entries) {
+      if (entry.type !== 'directory') continue;
+      for (const nested of this.listDirectory(rootPath, entry.relativePath)) {
+        if (nested.type === 'file' && !registered.has(nested.path)) listed.push(nested);
+      }
+    }
+    return listed;
   }
 
   // ---------------------------------------------------------------- amendments
