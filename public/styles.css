@@ -99,6 +99,8 @@ button:disabled { opacity: .45; cursor: default; }
 .empty-frame { grid-column: 1 / -1; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 14px; color: var(--muted); }
 .empty-frame .ws-name { font-size: 1.15em; color: var(--text); }
+.empty-frame.launchpad-host { align-items: stretch; justify-content: flex-start; padding: var(--spacing); }
+.empty-frame.launchpad-host .card { width: 100%; max-width: 720px; margin: 0 auto; }
 
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   padding: var(--spacing) calc(var(--spacing) * 1.2); }

@@ -298,20 +298,38 @@ function renderMissingFrame() {
   };
 }
 
-function renderEmptyFrame() {
+async function renderEmptyFrame() {
   stage.className = 'stage layout-main';
   const frame = document.createElement('div');
-  frame.className = 'empty-frame';
-  frame.innerHTML = kernel.workspace
-    ? `<div class="ws-name">Workspace: ${esc(kernel.workspace.label || kernel.workspace.root_path)}</div>
+  if (kernel.workspace) {
+    frame.className = 'empty-frame';
+    frame.innerHTML = `<div class="ws-name">Workspace: ${esc(kernel.workspace.label || kernel.workspace.root_path)}</div>
        <div>No views loaded</div>
-       <button id="emptyAddPlugin" class="primary">+ Add plugin</button>`
-    : `<div class="ws-name">No workspace</div>
-       <div>A workspace is a folder plus its own set of plugins.</div>
-       <button id="emptyAddWorkspace" class="primary">＋ Workspace</button>`;
+       <button id="emptyAddPlugin" class="primary">+ Add plugin</button>`;
+    stage.append(frame);
+    frame.querySelector('#emptyAddPlugin')?.addEventListener('click', openPluginManager);
+    return;
+  }
+  // No workspace yet. Stations cannot activate, so the launchpad is the
+  // frame (workspaces + programs) and chrome still owns ＋ Workspace.
+  frame.className = 'empty-frame launchpad-host';
+  const host = document.createElement('div');
+  const add = document.createElement('button');
+  add.id = 'emptyAddWorkspace';
+  add.className = 'primary';
+  add.textContent = '＋ Workspace';
+  add.addEventListener('click', openWorkspaceDialog);
+  frame.append(host, add);
   stage.append(frame);
-  frame.querySelector('#emptyAddPlugin')?.addEventListener('click', openPluginManager);
-  frame.querySelector('#emptyAddWorkspace')?.addEventListener('click', openWorkspaceDialog);
+  try {
+    const module = await loadModule({ contribution_id: 'launchpad', client_entry: '/contrib/launchpad.js' });
+    const { ctx, dispose } = makeContext(null, {});
+    const unmount = await module.mount(host, ctx);
+    kernel.disposers.push(() => { if (typeof unmount === 'function') unmount(); dispose(); });
+  } catch (error) {
+    console.error('mount launchpad', error);
+    host.innerHTML = `<div class="card"><h3>Launchpad</h3><div class="muted">Failed to mount: ${esc(error.message)}</div></div>`;
+  }
 }
 
 async function loadModule(row) {
@@ -901,7 +919,7 @@ function renderCustomize(tab = 'appearance') {
   if (tab === 'dashboard') {
     const links = mergedPrefs().links || [];
     pane.innerHTML = `
-      <div class="muted" style="margin-bottom:8px">The dashboard's content blocks (launchpad, inbox, statistics) are wired in Plugins. Extra launchpad links for THIS workspace live here.</div>
+      <div class="muted" style="margin-bottom:8px">The dashboard's content blocks (board, inbox, statistics) are wired in Plugins. Extra launchpad links for THIS workspace live here.</div>
       <div data-role="links"></div>
       <div class="pm-add"><input data-role="new-label" placeholder="label (e.g. Extraction app)">
         <input data-role="new-url" class="mono" placeholder="http://127.0.0.1:7860">

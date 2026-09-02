@@ -1,6 +1,7 @@
-// Contribution: the link hub. One card, three launch groups: enabled
-// stations (activate in place), known workspaces (switch via the bus), and
-// the fixed programs on this machine plus any workspace-preference links.
+// Contribution: the link hub. Home is the no-workspace kernel frame
+// (before a workspace is chosen); still wireable into any station.
+// With a workspace, Stations activate in place. Workspaces switch via
+// the bus. Programs are the machine list plus workspace-preference links.
 const PROGRAM_DEFAULTS = [
   { label: 'Extraction app', url: 'http://127.0.0.1:7860' },
   { label: 'EPUB extract', url: 'http://127.0.0.1:7861' },
@@ -50,19 +51,21 @@ export function mount(el, ctx) {
     el.innerHTML = '<div class="card"><h3>Launchpad</h3></div>';
     const host = el.querySelector('.card');
 
-    const stationsGroup = group('Stations', true);
-    const stations = (Array.isArray(composition.enabled) ? composition.enabled : [])
-      .filter(row => row.plugin_kind === 'station');
-    for (const row of stations) {
-      let manifest = row.manifest || {};
-      if (typeof manifest === 'string') { try { manifest = JSON.parse(manifest); } catch { manifest = {}; } }
-      const node = chip('div', manifest.icon || '▦', row.label || row.plugin_id, row.plugin_id);
-      node.onclick = () => ctx.activateStation(row.plugin_id);
-      stationsGroup.row.append(node);
+    if (ctx.workspace) {
+      const stationsGroup = group('Stations', true);
+      const stations = (Array.isArray(composition.enabled) ? composition.enabled : [])
+        .filter(row => row.plugin_kind === 'station');
+      for (const row of stations) {
+        let manifest = row.manifest || {};
+        if (typeof manifest === 'string') { try { manifest = JSON.parse(manifest); } catch { manifest = {}; } }
+        const node = chip('div', manifest.icon || '▦', row.label || row.plugin_id, row.plugin_id);
+        node.onclick = () => ctx.activateStation(row.plugin_id);
+        stationsGroup.row.append(node);
+      }
+      host.append(stationsGroup.details);
     }
-    host.append(stationsGroup.details);
 
-    const wsGroup = group('Workspaces', false);
+    const wsGroup = group('Workspaces', !ctx.workspace);
     for (const ws of (Array.isArray(workspaces) ? workspaces : [])) {
       const isCurrent = ws.root_path === ctx.workspace?.root_path;
       const name = ws.label || ws.root_path.split('/').filter(Boolean).pop() || ws.root_path;
@@ -74,7 +77,7 @@ export function mount(el, ctx) {
     }
     host.append(wsGroup.details);
 
-    const programGroup = group('Programs on this machine', false);
+    const programGroup = group('Programs on this machine', !ctx.workspace);
     const extra = Array.isArray(prefs.workspace?.links) ? prefs.workspace.links : [];
     for (const link of [...PROGRAM_DEFAULTS, ...extra]) {
       if (!link || !link.url) continue;

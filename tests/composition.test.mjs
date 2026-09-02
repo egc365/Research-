@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { ControlStore } from '../src/store.mjs';
-import { catalogRows, defaultWiring, retired, stations, contributions } from '../plugins/registry.mjs';
+import { catalogRows, defaultWiring, retired, stations, contributions, wiringRemovals } from '../plugins/registry.mjs';
 
 function freshStore(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-ops-comp-'));
@@ -203,4 +203,43 @@ test('file-workbench is retired: no station row, no wiring, category on every su
   assert.equal(defaultWiring['file-workbench'], undefined);
   assert.ok(defaultWiring['dashboard-viewer'].main.includes('board-view'));
   assert.ok(!defaultWiring['dashboard-viewer'].main.includes('folder-cards'));
+  assert.ok(!defaultWiring['dashboard-viewer'].main.includes('launchpad'));
+});
+
+test('seeded dashboard is board, inbox, statistics; launchpad stays a wireable catalog contribution', t => {
+  const { store } = freshStore(t);
+  store.syncCatalog(catalogRows([]));
+  store.seedStationWiring(defaultWiring);
+  const wired = store.stationContributions('dashboard-viewer').map(r => r.contribution_id);
+  assert.deepEqual(wired, ['board-view', 'inbox', 'statistics-view']);
+  const catalog = store.listCatalog();
+  const launchpad = catalog.find(r => r.plugin_id === 'launchpad');
+  assert.ok(launchpad);
+  assert.equal(launchpad.plugin_kind, 'contribution');
+  const desc = String(launchpad.manifest?.description || contributions.find(c => c.id === 'launchpad')?.description || '');
+  assert.match(desc, /before a workspace|no-workspace/i);
+  assert.ok(stations.some(s => s.id === 'planning-board'));
+  assert.deepEqual(defaultWiring['planning-board'].main, ['board-view']);
+  assert.ok(!retired.includes('launchpad'));
+});
+
+test('catalog launchpad removal applies exactly once — an owner re-wire is never fought', t => {
+  const { store } = freshStore(t);
+  store.syncCatalog(catalogRows([]));
+  store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'launchpad', sortOrder: 10 });
+  store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'board-view', sortOrder: 20 });
+  const launchpadRemoval = wiringRemovals.find(r =>
+    r.stationId === 'dashboard-viewer' && r.slotName === 'main' && r.contributionId === 'launchpad');
+  assert.ok(launchpadRemoval, 'catalog exports a launchpad wiringRemovals row');
+  store.applyWiringRemovals(wiringRemovals);
+  const wired = () => store.db.prepare(
+    "SELECT contribution_id FROM station_contributions WHERE station_id='dashboard-viewer' ORDER BY sort_order"
+  ).all().map(r => r.contribution_id);
+  assert.ok(!wired().includes('launchpad'));
+  assert.ok(wired().includes('board-view'));
+  const meta = store.db.prepare("SELECT value FROM app_meta WHERE key=?").get(`wiring-removal:${launchpadRemoval.id}`);
+  assert.ok(meta);
+  store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'launchpad', sortOrder: 10 });
+  store.applyWiringRemovals(wiringRemovals);
+  assert.ok(wired().includes('launchpad'));
 });

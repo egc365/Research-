@@ -113,7 +113,7 @@ export const contributions = [
   { id: 'project-create-form',label: 'New project form',   entry: '/contrib/project-create-form.js',description: 'Name a project; the form writes the folder + README through the governed write path.' },
   { id: 'label-editor',      label: 'Label editor',       entry: '/contrib/label-editor.js',       headless: true, description: 'Manage labels in a dialog opened from the tree (create, rename, recolor, describe, delete, assign) — stored in the SQLite crosswalk, owner-only writes. Occupies no screen space until opened.' },
   { id: 'statistics-view',    label: 'Statistics',         entry: '/contrib/statistics-view.js',    description: 'Counts by state, event type, actor, and the last promotions.' },
-  { id: 'launchpad',          label: 'Launchpad',          entry: '/contrib/launchpad.js',          description: 'Dashboard link hub: stations, workspaces, and the machine’s other programs as compact chips. Per-workspace extra links come from the workspace preferences.' },
+  { id: 'launchpad',          label: 'Launchpad',          entry: '/contrib/launchpad.js',          description: 'Shown before a workspace is chosen: workspaces to enter and the machine’s programs. Still wireable into any station; the dashboard no longer mounts it by default.' },
   { id: 'inbox',              label: 'Inbox',              entry: '/contrib/inbox.js',              description: 'What needs the owner: candidates and validated artifacts awaiting a verdict, plus the latest activity.' },
   { id: 'folder-cards',       label: 'Folder cards',       entry: '/contrib/folder-cards.js',       description: 'Notion-style card view of a folder (the workspace root by default): one card per file or folder, with label chips.' },
   { id: 'section-favorites',  label: 'Favorites',          entry: '/contrib/section-favorites.js',  description: 'Sidebar section: starred files and folders (star them in the tree).' },
@@ -148,7 +148,7 @@ export const defaultWiring = {
       'promotion-control'
     ]
   },
-  'dashboard-viewer': { main: ['launchpad', 'board-view', 'inbox', 'statistics-view'] },
+  'dashboard-viewer': { main: ['board-view', 'inbox', 'statistics-view'] },
   'provenance-viewer': {
     main: ['revision-timeline'],
     side: ['actor-filter', 'provenance-block']
@@ -180,7 +180,8 @@ export const wiringAdditions = [
 // recorded in app_meta — so an owner who later re-adds the contribution is
 // never fought with.
 export const wiringRemovals = [
-  { id: '20260902-folder-cards-off-dashboard', stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'folder-cards' }
+  { id: '20260902-folder-cards-off-dashboard', stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'folder-cards' },
+  { id: '20260902-launchpad-off-dashboard', stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'launchpad' }
 ];
 
 // Default sidebar sections for a workspace with no sidebar_sections rows yet.
