@@ -24,7 +24,7 @@ export function open(ctx) {
       path: row.path,
       head: rel(row.path),
       title: row.path.split('/').pop(),
-      body: null,
+      body: '',
       text: note?.text || '',
       color: note?.color || null,
       face: null,

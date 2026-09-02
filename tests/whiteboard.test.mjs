@@ -89,12 +89,12 @@ test('in-memory model round-trips through its serializer; a v1 blob is refused',
   model.cards.push(
     {
       card_id: 1, surface: '', lane_id: 1, kind: 'file', ref: 'README.md', title: 'README.md',
-      body: 'the name given', color: null, face: 'card', icon: 'file',
+      body: 'the name given', color: null, face: null, icon: 'file',
       fields_json: '[]', sort_order: 100, created_at: '2026-09-02T00:00:00.000Z'
     },
     {
       card_id: 2, surface: '', lane_id: 1, kind: 'image', ref: DATA_URL, title: 'sketch.png',
-      color: null, face: 'card', icon: 'image', fields_json: '[]', sort_order: 120,
+      color: null, face: null, icon: 'image', fields_json: '[]', sort_order: 120,
       width: 180, created_at: '2026-09-02T00:00:00.000Z'
     }
   );

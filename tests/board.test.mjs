@@ -104,7 +104,7 @@ test('a file added inside a lane lands under the surface folder, not the lane', 
   const folder = await act(ws, 'add-card', { surface: 'hello', laneId: lane.lane_id, kind: 'folder', name: 'howdy' });
   assert.equal(folder.kind, 'folder');
   assert.equal(folder.ref, 'hello/howdy');
-  assert.equal(folder.face, 'sticky');
+  assert.equal(folder.face, null, 'a face is written only when the owner flips');
   assert.equal(folder.icon, 'folder');
   assert.deepEqual(findAll(ws.root), ['hello/', 'hello/howdy/', 'hello/plan.md']);
   const { lanes, cards } = await act(ws, 'tree', { surface: 'hello' });
@@ -257,7 +257,7 @@ test('migration: bound groups become lanes with a folder card, cards keep their 
   const plans = root.lanes[0];
   assert.deepEqual(plans.cards.map(c => [c.kind, c.ref, c.title, c.color, c.face, c.icon, c.fields_json]), [
     ['folder', 'plans', 'plans', STICKY_COLORS[2], 'card', 'P', '[{"label":"owner","value":"dan"}]'],
-    ['file', 'plans/README.md', 'README.md', null, 'card', 'file', '[]']
+    ['file', 'plans/README.md', 'README.md', null, null, 'file', '[]']
   ]);
   const legacy = root.lanes[1];
   assert.deepEqual(legacy.lanes.map(l => [l.name, l.orientation, l.cards.map(c => c.ref)]), [['legacy inner', 'horizontal', ['inner note']]]);
@@ -289,7 +289,7 @@ test('migration: a board from before folder_path and color, group_id NOT NULL', 
   `);
   old.close();
   const { lanes } = await act(ws, 'tree');
-  assert.deepEqual(lanes.map(l => [l.name, l.cards.map(c => [c.ref, c.color, c.face])]), [['Old', [['pre-color note', null, 'card']]]]);
+  assert.deepEqual(lanes.map(l => [l.name, l.cards.map(c => [c.ref, c.color, c.face])]), [['Old', [['pre-color note', null, null]]]]);
   const colored = await act(ws, 'update-card', { cardId: lanes[0].cards[0].card_id, color: STICKY_COLORS[3] });
   assert.equal(colored.color, STICKY_COLORS[3]);
   const floor = await act(ws, 'add-card', { kind: 'note', ref: 'a thought' });
@@ -491,20 +491,20 @@ test('fields round-trip and a fifth field is refused', async t => {
   await assert.rejects(act(ws, 'update-card', { cardId: card.card_id, fields: five }), e => e.code === 'BOARD_BAD_INPUT');
 });
 
-test('face persists on file, note, and folder cards', async t => {
+test('face is null until flipped, then persists on file, note, and folder cards', async t => {
   const ws = workspace(t);
   const file = await act(ws, 'add-card', { kind: 'file', name: 'README.md' });
-  assert.deepEqual([file.face, file.icon], ['card', 'file']);
+  assert.deepEqual([file.face, file.icon], [null, 'file']);
   const note = await act(ws, 'add-card', { kind: 'note', ref: 'hello' });
-  assert.deepEqual([note.face, note.icon], ['card', 'note']);
+  assert.deepEqual([note.face, note.icon], [null, 'note']);
   const folder = await act(ws, 'add-card', { kind: 'folder', name: 'plans' });
-  assert.deepEqual([folder.face, folder.icon], ['sticky', 'folder']);
+  assert.deepEqual([folder.face, folder.icon], [null, 'folder']);
   const flipped = await act(ws, 'update-card', { cardId: file.card_id, face: 'sticky', icon: 'P' });
   assert.deepEqual([flipped.face, flipped.icon], ['sticky', 'P']);
   const folderFlip = await act(ws, 'update-card', { cardId: folder.card_id, face: 'card' });
   assert.equal(folderFlip.face, 'card');
   const { cards } = await act(ws, 'tree');
-  assert.deepEqual(cards.map(c => [c.kind, c.face]), [['file', 'sticky'], ['note', 'card'], ['folder', 'card']]);
+  assert.deepEqual(cards.map(c => [c.kind, c.face]), [['file', 'sticky'], ['note', null], ['folder', 'card']]);
   await assert.rejects(act(ws, 'update-card', { cardId: file.card_id, face: 'back' }), e => e.code === 'BOARD_BAD_INPUT');
   await assert.rejects(act(ws, 'update-card', { cardId: file.card_id, icon: 'xyz' }), e => e.code === 'BOARD_BAD_INPUT');
 });

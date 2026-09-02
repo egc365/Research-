@@ -102,6 +102,10 @@ test('folder source: one card per entry with labels and sticky, folders reveal, 
   assert.deepEqual(ctx.emitted.at(-1), ['reveal-path', { path: '/ws/plans' }]);
   await source.select(file);
   assert.deepEqual(ctx.calls.at(-1), ['selectFile', '/ws/README.md']);
+  ctx.selection = { path: '/ws/README.md' };
+  assert.equal(source.selected(), 'README.md', 'the mark matches the card id, workspace-relative');
+  ctx.selection = { path: '/elsewhere/x.md' };
+  assert.equal(source.selected(), null);
   await source.text(file, 'read me', undefined);
   assert.deepEqual(ctx.calls.at(-1), ['stickies', 'set', { rootPath: '/ws', path: 'README.md', text: 'read me', color: '#f6e58d' }]);
 });

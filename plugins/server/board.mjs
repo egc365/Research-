@@ -10,7 +10,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
   fail, needName, needLaneName, idOrNull, relPath, childRel,
-  parseColor, parseOrientation, parseFace, parseIcon, parseFields, parseWidth, defaultFace, defaultIcon, viewCard,
+  parseColor, parseOrientation, parseFace, parseIcon, parseFields, parseWidth, defaultIcon, viewCard,
   nextOrder, laneDepth, subtreeHeight, assertDepth, assertNoCycle, imageDataUrl, imageFileName, nestTree
 } from '../../public/contrib/lib/board-rules.js';
 import { plugin as stickies } from './stickies.mjs';
@@ -355,7 +355,7 @@ async function saveSketch(db, ctx, dest, model) {
     }
     insertCard(db, {
       surface, laneId, kind: rowKind, ref, title, color,
-      face: parseFace(card.face, defaultFace(rowKind)),
+      face: parseFace(card.face, null),
       icon: parseIcon(card.icon, defaultIcon(iconKind)),
       fields_json, width, now: ctx.now
     });
@@ -451,7 +451,7 @@ export const plugin = {
       }
       return insertCard(db, {
         surface, laneId, kind, ref, title, color,
-        face: parseFace(payload.face, defaultFace(kind)),
+        face: parseFace(payload.face, null),
         icon: parseIcon(payload.icon, defaultIcon(kind)),
         fields_json: parseFields(payload, '[]'),
         now

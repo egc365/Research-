@@ -49,9 +49,13 @@ export function open(ctx, config) {
   return {
     name: 'Folder cards',
     events: ['fs-changed', 'labels-changed'],
-    marks: [],
+    marks: ['selection'],
     labels: true,
-    selected: () => null,
+    // Card ids are workspace-relative; the selection carries the absolute path.
+    selected: () => {
+      const p = ctx.selection?.path;
+      return p && p.startsWith(root() + '/') ? p.slice(root().length + 1) : null;
+    },
     editing: () => false,
     load,
     select: card => card.kind === 'folder' ? reveal(card) : ctx.selectFile(card.path),

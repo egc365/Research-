@@ -3,7 +3,7 @@
 // localStorage, keyed by workspace root. Save to project is the only crossing.
 import {
   fail, needName, needLaneName, refuseDuplicateLane, idOrNull, relPath, childRel,
-  parseColor, parseOrientation, parseFace, parseIcon, parseFields, parseWidth, defaultFace, defaultIcon, viewCard,
+  parseColor, parseOrientation, parseFace, parseIcon, parseFields, parseWidth, defaultIcon, viewCard,
   nextOrder, laneDepth, subtreeHeight, assertDepth, assertNoCycle, imageDataUrl, imageFileName, nestTree
 } from './board-rules.js';
 
@@ -153,7 +153,7 @@ function apply(state, action, payload) {
       ref,
       title,
       color,
-      face: parseFace(payload.face, defaultFace(kind)),
+      face: parseFace(payload.face, null),
       icon: parseIcon(payload.icon, defaultIcon(kind)),
       fields_json: parseFields(payload, '[]'),
       width: null,

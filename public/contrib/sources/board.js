@@ -19,6 +19,7 @@ export function open(ctx, config, view) {
   let data = { surface: '', lanes: [], cards: [] };
   let stickies = { notes: {} };
   let labels = {};
+  let listed = null; // relative paths directly under the surface, null on the whiteboard
   let adding = null; // { laneId: number|null } null laneId is the floor
   let addKind = 'file';
   let addRef = '';
@@ -152,10 +153,18 @@ export function open(ctx, config, view) {
       tags: path && !isWhiteboard ? labels[path] || labels[row.ref] || [] : [],
       image: isImage(row) ? imageSrc(row) : null,
       width: row.width || null,
-      missing: isPathKind(row) && !row.ref,
+      missing: isPathKind(row) && (!row.ref || gone(row.ref)),
       badges: [],
       foot: []
     };
+  }
+
+  // A card directly under the surface is missing when the surface listing
+  // lacks it; a deeper ref (a tree drop is a prefix match) is not judged.
+  function gone(ref) {
+    if (!listed) return false;
+    const parent = ref.split('/').slice(0, -1).join('/');
+    return parent === surface && !listed.has(ref);
   }
 
   function allRows(lanes = data.lanes, out = [...(data.cards || [])]) {
@@ -378,21 +387,20 @@ export function open(ctx, config, view) {
     const color = addColor;
     const raw = addRef.trim();
     const laneId = lane ? lane.lane_id : null;
-    const face = config.appearance === 'card' || config.appearance === 'sticky' ? config.appearance : undefined;
     try {
       if (kind === 'folder') {
         if (!raw) { ctx.notify('A folder needs a name', 'error'); return; }
-        await call('add-card', { kind: 'folder', laneId, name: raw, color, face });
+        await call('add-card', { kind: 'folder', laneId, name: raw, color });
       } else if (kind === 'file') {
         if (!raw) { ctx.notify('A file needs a name', 'error'); return; }
-        await call('add-card', { kind: 'file', laneId, name: raw, body, color, face });
+        await call('add-card', { kind: 'file', laneId, name: raw, body, color });
       } else if (kind === 'note') {
         const ref = body.trim();
         if (!ref) { ctx.notify('A note needs some text', 'error'); return; }
-        await call('add-card', { laneId, kind, ref, title: ref.split('\n')[0], color, face });
+        await call('add-card', { laneId, kind, ref, title: ref.split('\n')[0], color });
       } else {
         if (!raw) { ctx.notify('A link card needs a URL', 'error'); return; }
-        await call('add-card', { laneId, kind, ref: raw, title: body.trim() || null, color, face });
+        await call('add-card', { laneId, kind, ref: raw, title: body.trim() || null, color });
       }
     } catch (error) {
       ctx.notify(error.message, 'error');
@@ -736,12 +744,14 @@ export function open(ctx, config, view) {
 
   async function load() {
     surface = (ctx.boardPath || []).map(String).join('/');
-    const [t, s, l] = await Promise.all([
+    const [t, s, l, entries] = await Promise.all([
       call('tree'),
       isWhiteboard ? { notes: {} } : ctx.action('stickies', 'list', { rootPath: root() }).catch(() => ({ notes: {} })),
-      isWhiteboard ? {} : ctx.request('/api/path-labels?root=' + encodeURIComponent(root())).catch(() => ({}))
+      isWhiteboard ? {} : ctx.request('/api/path-labels?root=' + encodeURIComponent(root())).catch(() => ({})),
+      isWhiteboard ? null : ctx.request(`/api/tree?root=${encodeURIComponent(root())}&path=${encodeURIComponent(surface || '.')}`).catch(() => [])
     ]);
     data = t; stickies = s; labels = l;
+    listed = entries && new Set(entries.map(e => e.relativePath));
   }
 
   function onPaste(e) {

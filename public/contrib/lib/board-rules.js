@@ -130,7 +130,7 @@ export function viewCard(row) {
   if (!row) return row;
   return {
     ...row,
-    face: row.face || defaultFace(row.kind),
+    face: row.face || null,
     icon: row.icon || defaultIcon(row.kind),
     fields_json: row.fields_json || '[]'
   };

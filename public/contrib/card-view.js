@@ -9,6 +9,8 @@ import { NAMED_ICONS, MAX_FIELDS, defaultFace } from './lib/board-rules.js';
 
 const SOURCES = ['board', 'folder', 'blocks', 'queue'];
 const APPEARANCES = ['card', 'sticky', 'icon'];
+// The named icons draw as symbols; a one-character icon draws as itself.
+const GLYPHS = { file: '📄', folder: '📁', note: '📝', link: '🔗', image: '🖼' };
 const CONTROLS = '.text, .body, .fields, .tags, .flip, .icon, .open, .board-card-palette';
 
 export async function mount(el, ctx) {
@@ -82,25 +84,18 @@ export async function mount(el, ctx) {
     return b;
   }
 
-  function markMissing(node) {
-    if (!node || node.querySelector('.badge.missing')) return;
-    node.dataset.missing = '1';
-    (node.querySelector('.title') || node.querySelector('.icon') || node).append(' ', badge('missing', 'missing'));
-  }
-
   function loadPreview(card) {
-    if (card.kind !== 'file' || card.image || card.body != null || !card.path || !root()) return;
+    if (card.kind !== 'file' || card.image || card.missing || card.body != null || !card.path || !root()) return;
     if (previews.has(card.path)) return;
     previews.set(card.path, '');
-    const node = () => el.querySelector(`.board-card[data-card-id="${CSS.escape(String(card.id))}"]`);
     ctx.request(`/api/file?root=${encodeURIComponent(root())}&path=${encodeURIComponent(card.path)}`)
       .then(rec => {
         const text = String(rec.content || '').split('\n').slice(0, 8).join('\n');
         previews.set(card.path, text);
-        const body = node()?.querySelector('.body');
+        const body = el.querySelector(`.board-card[data-card-id="${CSS.escape(String(card.id))}"] .body`);
         if (body && !body.querySelector('textarea')) body.textContent = text;
       })
-      .catch(() => { markMissing(node()); });
+      .catch(() => {});
   }
 
   const cardBody = card => card.body != null ? String(card.body) : previews.get(card.path) || '';
@@ -133,14 +128,14 @@ export async function mount(el, ctx) {
     const wrap = document.createElement('span');
     wrap.className = 'icon';
     wrap.dataset.icon = card.icon;
-    wrap.textContent = card.icon;
+    wrap.textContent = GLYPHS[card.icon] ?? card.icon;
     isolateStickyPointer(wrap);
     if (!source.patch) return wrap;
     wrap.onclick = e => {
       e.stopPropagation();
       if (wrap.querySelector('.icon-picker')) {
         wrap.querySelector('.icon-picker').remove();
-        wrap.textContent = card.icon;
+        wrap.textContent = GLYPHS[card.icon] ?? card.icon;
         return;
       }
       wrap.textContent = '';
@@ -149,7 +144,7 @@ export async function mount(el, ctx) {
       for (const name of NAMED_ICONS) {
         const b = document.createElement('button');
         b.type = 'button';
-        b.textContent = name;
+        b.textContent = `${GLYPHS[name]} ${name}`;
         b.onclick = ev => { ev.stopPropagation(); persist(card, { icon: name }); };
         picker.appendChild(b);
       }
@@ -526,7 +521,7 @@ export async function mount(el, ctx) {
       .catch(error => { if (!disposed) el.textContent = `${source.name} failed: ${error.message}`; });
   }
 
-  const view = { cardEl, btn, div, removeBtn, run, repaint, paint, stopEditing, editing: () => editingId != null };
+  const view = { btn, div, removeBtn, run, repaint, paint, stopEditing, editing: () => editingId != null };
   const source = await open(ctx, ctx.config, view);
 
   for (const event of source.events) ctx.bus.on(event, () => repaint());
