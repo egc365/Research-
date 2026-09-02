@@ -333,8 +333,7 @@ function contributionHeader({ stationId, slotName, contributionId, label }) {
   header.dataset.slot = slotName;
   header.dataset.contribution = contributionId;
   header.innerHTML = `<span>${esc(label)}</span><button type="button" title="Open plugin manager" aria-label="Open plugin manager">⚙</button>`;
-  header.querySelector('button').addEventListener('click', event => {
-    event.stopPropagation();
+  header.querySelector('button').addEventListener('click', () => {
     openPluginManager(stationId);
   });
   return header;
@@ -418,14 +417,14 @@ async function activateStation(stationId) {
       contributionId: row.contribution_id,
       label: row.label
     }));
-    let host = document.createElement('div');
+    let host;
     if (row.slot_name === 'side') {
       const remembered = uiMemory.read().sideCollapsed?.[stationId]?.[row.contribution_id];
       const collapsed = remembered ?? lifecycleLast.has(row.contribution_id);
       section.className = 'section side-section' + (collapsed ? ' collapsed' : '');
       const head = document.createElement('div');
       head.className = 'section-head';
-      head.innerHTML = `<span data-caret>${collapsed ? '▸' : '⌄'}</span><span>${esc(row.label)}</span>`;
+      head.innerHTML = `<span data-caret>${collapsed ? '▸' : '⌄'}</span>`;
       head.onclick = () => {
         const next = !section.classList.contains('collapsed');
         section.classList.toggle('collapsed', next);
@@ -437,6 +436,7 @@ async function activateStation(stationId) {
       section.append(head, body);
       host = body;
     } else {
+      host = document.createElement('div');
       section.append(host);
     }
     try {

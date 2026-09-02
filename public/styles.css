@@ -91,8 +91,8 @@ button:disabled { opacity: .45; cursor: default; }
 .slot { background: var(--background); overflow: auto; padding: var(--spacing); min-width: 0; }
 .slot > section + section { margin-top: var(--spacing); }
 .contrib-header { display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  flex: none; font-size: .75em; letter-spacing: .05em; text-transform: uppercase;
-  color: var(--muted-text); padding: 0 0 4px; line-height: 1.2; min-height: 0; }
+  font-size: .75em; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--muted-text); padding: 0 0 4px; line-height: 1.2; }
 .contrib-header button { padding: 0 6px; font-size: 1.05em; text-transform: none;
   letter-spacing: 0; line-height: 1.2; flex: none; }
 
