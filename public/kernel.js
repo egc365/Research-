@@ -36,7 +36,8 @@ const kernel = {
   sidebarDisposers: [],     // sidebar section unmounts, run on workspace switch
   dirtyGuards: [],          // contributions veto navigation (unsaved editor text)
   prefs: { user: {}, workspace: {} },  // appearance + navigation preferences
-  sidebarSections: []       // sidebar_sections rows for the current workspace
+  sidebarSections: [],      // sidebar_sections rows for the current workspace
+  boardPath: []             // board group ids from root to the open group
 };
 
 // -------------------------------------------------------- appearance engine
@@ -118,6 +119,15 @@ const bus = {
   }
 };
 
+bus.on('board-path', ({ path, source } = {}) => {
+  const next = Array.isArray(path) ? path.map(String) : [];
+  const prev = (kernel.boardPath || []).join('/');
+  kernel.boardPath = next;
+  if (skipHistory || source === 'history') return;
+  if (next.join('/') === prev) return;
+  commitHistory('push');
+});
+
 async function request(url, options = {}) {
   const response = await fetch(url, {
     ...options,
@@ -140,14 +150,77 @@ function notify(message, kind = 'info') {
   statusBar.dataset.kind = kind;
 }
 
+function relativeFile(p) {
+  if (!p || !kernel.workspace) return p || null;
+  const root = kernel.workspace.root_path;
+  if (p === root) return '';
+  return p.startsWith(root + '/') ? p.slice(root.length + 1) : p;
+}
+
+function snapshot() {
+  return {
+    ws: kernel.workspace?.root_path || null,
+    station: kernel.activeStation || null,
+    path: [...(kernel.boardPath || [])].map(String),
+    file: relativeFile(kernel.selection?.path)
+  };
+}
+
+function readUrlState() {
+  const q = new URLSearchParams(location.search);
+  const path = q.get('path');
+  return {
+    ws: q.get('ws') || null,
+    station: q.get('station') || null,
+    path: path ? path.split('/').filter(Boolean) : [],
+    file: q.get('file') || null
+  };
+}
+
+function urlHasNav(state) {
+  return Boolean(state.ws || state.station || state.path?.length || state.file);
+}
+
+function urlFrom(state) {
+  const q = new URLSearchParams();
+  if (state.ws) q.set('ws', state.ws);
+  if (state.station) q.set('station', state.station);
+  if (state.path?.length) q.set('path', state.path.join('/'));
+  if (state.file) q.set('file', state.file);
+  const query = q.toString();
+  return location.pathname + (query ? `?${query}` : '');
+}
+
+function sameNav(a, b) {
+  if (!a || !b) return false;
+  return a.ws === b.ws && a.station === b.station
+    && (a.path || []).join('/') === (b.path || []).join('/')
+    && (a.file || '') === (b.file || '');
+}
+
+let skipHistory = false;
+
+function commitHistory(mode) {
+  const state = snapshot();
+  const url = urlFrom(state);
+  if (mode === 'push') {
+    if (sameNav(history.state, state) && `${location.pathname}${location.search}` === url) return;
+    history.pushState(state, '', url);
+  } else {
+    history.replaceState(state, '', url);
+  }
+}
+
 async function selectFile(path) {
   if (!kernel.workspace) return;
-  const record = await request(`/api/file?root=${encodeURIComponent(kernel.workspace.root_path)}&path=${encodeURIComponent(path)}`);
+  const abs = path.startsWith('/') ? path : `${kernel.workspace.root_path}/${path}`;
+  const record = await request(`/api/file?root=${encodeURIComponent(kernel.workspace.root_path)}&path=${encodeURIComponent(abs)}`);
   kernel.selection = record;
   kernel.card = null;
   uiMemory.patch(s => { (s.selection ??= {})[kernel.workspace.root_path] = record.path; });
   bus.emit('selection', record);
-  notify(`Loaded ${path.split('/').pop()} · sha256 ${record.checksum.slice(0, 12)}…`);
+  notify(`Loaded ${abs.split('/').pop()} · sha256 ${record.checksum.slice(0, 12)}…`);
+  if (!skipHistory) commitHistory('replace');
   return record;
 }
 
@@ -198,6 +271,10 @@ function makeContext(stationId, config, wiringRows = null) {
     // (e.g. the tree shows "Labels…" only when label-editor is wired here).
     get wiring() { return wiringRows || kernel.composition.stations[stationId] || []; },
     activateStation,
+    get boardPath() { return kernel.boardPath || []; },
+    setBoardPath(ids) {
+      bus.emit('board-path', { path: Array.isArray(ids) ? ids.map(String) : [] });
+    },
     // Which stations a contribution may offer to open — retired or disabled
     // ids (e.g. an old openIn config naming file-workbench) filter out.
     enabledStationIds: () => enabledStations().map(row => row.plugin_id),
@@ -233,39 +310,140 @@ function enabledStations() {
   return kernel.composition.enabled.filter(row => row.plugin_kind === 'station');
 }
 
-// The nav delineates stations by function (manifest.category): Plan, Curate,
-// Monitor lead; anything uncategorized lands in a trailing bucket in the
-// order it appears. Groups render as a labeled cluster, not a flat row.
-const CATEGORY_ORDER = ['Plan', 'Curate', 'Monitor'];
+// Curate and Monitor stay grouped. Plan dissolved: Board is an ungrouped
+// home station, Inbox and Workspace are chrome dropdowns, not stations.
+const CATEGORY_ORDER = ['Curate', 'Monitor'];
+const HOME_STATION = 'dashboard-viewer';
+
+function closeNavDrops() {
+  for (const panel of stationBar.querySelectorAll('.nav-drop-panel')) panel.hidden = true;
+  for (const wrap of stationBar.querySelectorAll('.nav-drop')) wrap.classList.remove('open');
+}
+
+function stationButton(row) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.dataset.station = row.plugin_id;
+  button.textContent = `${row.manifest.icon || ''} ${row.label}`.trim();
+  button.classList.toggle('active', row.plugin_id === kernel.activeStation);
+  button.onclick = () => activateStation(row.plugin_id);
+  return button;
+}
+
+function navDropdown({ id, label, fill }) {
+  const wrap = document.createElement('div');
+  wrap.className = 'nav-drop';
+  wrap.id = id;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = label;
+  button.setAttribute('aria-haspopup', 'true');
+  const panel = document.createElement('div');
+  panel.className = 'nav-drop-panel';
+  panel.hidden = true;
+  button.onclick = async event => {
+    event.stopPropagation();
+    const willOpen = panel.hidden;
+    closeNavDrops();
+    if (!willOpen) return;
+    panel.hidden = false;
+    wrap.classList.add('open');
+    await fill(panel);
+  };
+  wrap.append(button, panel);
+  return wrap;
+}
+
+let inboxDispose = null;
+
+async function fillInbox(panel) {
+  if (inboxDispose) { inboxDispose(); inboxDispose = null; }
+  panel.replaceChildren();
+  const host = document.createElement('div');
+  panel.append(host);
+  try {
+    const module = await loadModule({ contribution_id: 'inbox', client_entry: '/contrib/inbox.js' });
+    const { ctx, dispose } = makeContext(kernel.activeStation, {});
+    const unmount = await module.mount(host, ctx);
+    inboxDispose = () => { if (typeof unmount === 'function') unmount(); dispose(); };
+  } catch (error) {
+    host.innerHTML = `<div class="muted">Inbox failed: ${esc(error.message)}</div>`;
+  }
+}
+
+function fillWorkspaces(panel) {
+  panel.replaceChildren();
+  const row = document.createElement('div');
+  row.className = 'launch-row';
+  panel.append(row);
+  for (const ws of kernel.workspaces) {
+    const isCurrent = ws.root_path === kernel.workspace?.root_path;
+    const name = ws.label || ws.root_path.split('/').filter(Boolean).pop() || ws.root_path;
+    const missing = ws.exists === false;
+    const node = document.createElement('div');
+    node.className = 'launch-chip';
+    if (isCurrent) node.classList.add('active');
+    node.title = missing ? `${ws.root_path} (missing on disk)` : ws.root_path;
+    const ic = document.createElement('span');
+    ic.className = 'ic';
+    ic.textContent = missing ? '⚠' : '🗂';
+    const label = document.createElement('span');
+    label.textContent = name;
+    node.append(ic, label);
+    if (!isCurrent) {
+      node.onclick = () => {
+        closeNavDrops();
+        if (navigationBlocked()) return;
+        loadWorkspaces(ws.root_path).catch(showError);
+      };
+    }
+    row.append(node);
+  }
+  if (!kernel.workspaces.length) {
+    panel.append(Object.assign(document.createElement('div'), { className: 'muted', textContent: 'No workspaces yet.' }));
+  }
+}
 
 function renderStationBar() {
   stationBar.replaceChildren();
+  const available = enabledStations();
+  const home = available.find(row => row.plugin_id === HOME_STATION);
+  if (home) stationBar.append(stationButton(home));
+  stationBar.append(navDropdown({
+    id: 'navInbox',
+    label: 'Inbox',
+    fill: fillInbox
+  }));
+  const wsName = kernel.workspace
+    ? (kernel.workspace.label || kernel.workspace.root_path.split('/').filter(Boolean).pop() || 'Workspace')
+    : 'Workspace';
+  stationBar.append(navDropdown({
+    id: 'navWorkspace',
+    label: wsName,
+    fill: fillWorkspaces
+  }));
   const buckets = new Map();
-  for (const row of enabledStations()) {
+  for (const row of available) {
+    if (row.plugin_id === HOME_STATION) continue;
     const category = row.manifest.category || 'More';
+    if (category === 'Plan') continue;
     if (!buckets.has(category)) buckets.set(category, []);
     buckets.get(category).push(row);
   }
   const order = [...CATEGORY_ORDER.filter(c => buckets.has(c)), ...[...buckets.keys()].filter(c => !CATEGORY_ORDER.includes(c))];
   for (const category of order) {
     const cluster = document.createElement('div');
-    cluster.style.cssText = 'display:flex;align-items:center;gap:4px;padding:0 8px;border-left:1px solid var(--line, #333)';
-    if (buckets.size > 1) {
+    cluster.className = 'nav-cluster';
+    cluster.dataset.category = category;
+    if (CATEGORY_ORDER.includes(category)) {
       const tag = document.createElement('span');
+      tag.className = 'nav-cluster-label';
       tag.textContent = category;
-      tag.style.cssText = 'font-size:10px;letter-spacing:.08em;text-transform:uppercase;opacity:.5;margin-right:2px';
       cluster.append(tag);
     }
-    for (const row of buckets.get(category)) {
-      const button = document.createElement('button');
-      button.textContent = `${row.manifest.icon || ''} ${row.label}`.trim();
-      button.classList.toggle('active', row.plugin_id === kernel.activeStation);
-      button.onclick = () => activateStation(row.plugin_id);
-      cluster.append(button);
-    }
+    for (const row of buckets.get(category)) cluster.append(stationButton(row));
     stationBar.append(cluster);
   }
-  if (stationBar.firstChild) stationBar.firstChild.style.borderLeft = 'none';
 }
 
 // A registered workspace whose folder is gone from disk (moved or deleted
@@ -401,6 +579,7 @@ async function activateStation(stationId) {
     if (kernel.activeStation) return;
     return renderEmptyFrame();
   }
+  const previous = kernel.activeStation;
   disposeMounts();
   kernel.activeStation = stationId;
   if (kernel.workspace) uiMemory.patch(s => { (s.station ??= {})[kernel.workspace.root_path] = stationId; });
@@ -419,6 +598,7 @@ async function activateStation(stationId) {
   if (slotEls.main && slotEls.side && (layout === 'main-side' || layout === 'rail-main-side')) {
     mountPaneResizer(slotEls);
   }
+  if (stationId === HOME_STATION && slotEls.main) mountBoardFrameChrome(slotEls.main);
   // Lifecycle metadata sits at the bottom of the side slot and starts folded —
   // a render-order nudge only; the stored wiring sort_order is untouched.
   const lifecycleLast = new Set(['state-badge', 'provenance-block', 'revision-timeline']);
@@ -470,6 +650,43 @@ async function activateStation(stationId) {
   for (const [name, el] of Object.entries(slotEls)) {
     if (!el.children.length) el.innerHTML = `<div class="empty">Empty slot: ${esc(name)}. Wire a contribution in Plugins ⚙.</div>`;
   }
+  if (!skipHistory && previous !== stationId) commitHistory('push');
+}
+
+function mountBoardFrameChrome(slotMain) {
+  const bar = document.createElement('div');
+  bar.className = 'board-frame-chrome';
+  const add = document.createElement('button');
+  add.id = 'boardAddProject';
+  add.type = 'button';
+  add.textContent = '＋ project';
+  add.onclick = () => openProjectDialog().catch(showError);
+  bar.append(add);
+  slotMain.prepend(bar);
+}
+
+let projectDialog = null;
+let projectDispose = null;
+
+async function openProjectDialog() {
+  if (!kernel.workspace) return notify('Add a workspace first.', 'error');
+  if (!projectDialog) {
+    projectDialog = document.createElement('dialog');
+    projectDialog.className = 'plugin-manager';
+    projectDialog.innerHTML = `<div class="pm-head"><strong>New project</strong><button type="button" data-role="close">Close</button></div><div data-role="body" class="pm-body"></div>`;
+    projectDialog.querySelector('[data-role="close"]').onclick = () => projectDialog.close();
+    document.body.append(projectDialog);
+  }
+  const body = projectDialog.querySelector('[data-role="body"]');
+  if (projectDispose) { projectDispose(); projectDispose = null; }
+  body.replaceChildren();
+  const host = document.createElement('div');
+  body.append(host);
+  const module = await loadModule({ contribution_id: 'project-create-form', client_entry: '/contrib/project-create-form.js' });
+  const { ctx, dispose } = makeContext(kernel.activeStation, {});
+  const unmount = await module.mount(host, ctx);
+  projectDispose = () => { if (typeof unmount === 'function') unmount(); dispose(); };
+  projectDialog.showModal();
 }
 
 async function recompose(keepStation = true) {
@@ -490,6 +707,7 @@ async function recompose(keepStation = true) {
   const target = keepStation && available.some(row => row.plugin_id === kernel.activeStation)
     ? kernel.activeStation
     : available.some(row => row.plugin_id === remembered) ? remembered
+    : available.some(row => row.plugin_id === HOME_STATION) ? HOME_STATION
     : available[0].plugin_id;
   await activateStation(target);
 }
@@ -583,37 +801,48 @@ $('sidebarPlugins').onclick = () => openPluginManager();
 
 // ---------------------------------------------------------------- workspaces
 
-async function loadWorkspaces(selectPath = null) {
-  kernel.workspaces = await request('/api/workspaces');
-  workspaceSelect.replaceChildren();
-  for (const ws of kernel.workspaces) {
-    const option = document.createElement('option');
-    option.value = ws.root_path;
-    option.textContent = (ws.label || ws.root_path) + (ws.exists === false ? ' ⚠ missing on disk' : '');
-    workspaceSelect.append(option);
+async function loadWorkspaces(selectPath = null, { restoreMemory = true } = {}) {
+  const pushAfter = !skipHistory;
+  if (pushAfter) kernel.boardPath = [];
+  const prevSkip = skipHistory;
+  skipHistory = true;
+  try {
+    kernel.workspaces = await request('/api/workspaces');
+    workspaceSelect.replaceChildren();
+    for (const ws of kernel.workspaces) {
+      const option = document.createElement('option');
+      option.value = ws.root_path;
+      option.textContent = (ws.label || ws.root_path) + (ws.exists === false ? ' ⚠ missing on disk' : '');
+      workspaceSelect.append(option);
+    }
+    // A contribution (the launchpad) may ask the kernel to switch workspaces.
+    if (!kernel._switchHooked) {
+      kernel._switchHooked = true;
+      bus.on('switch-workspace', ({ root }) => {
+        if (navigationBlocked()) return;
+        loadWorkspaces(root).catch(showError);
+      });
+    }
+    const wanted = selectPath || kernel.workspace?.root_path || uiMemory.read().workspace || kernel.workspaces[0]?.root_path;
+    kernel.workspace = kernel.workspaces.find(ws => ws.root_path === wanted) || kernel.workspaces[0] || null;
+    if (kernel.workspace) {
+      workspaceSelect.value = kernel.workspace.root_path;
+      uiMemory.patch(s => { s.workspace = kernel.workspace.root_path; });
+    }
+    kernel.selection = null;
+    kernel.card = null;
+    bus.emit('workspace', kernel.workspace);
+    await loadPrefs().catch(showError);
+    await recompose(false);
+    await renderSidebar().catch(showError);
+    if (restoreMemory) {
+      const rememberedFile = kernel.workspace ? uiMemory.read().selection?.[kernel.workspace.root_path] : null;
+      if (rememberedFile) await selectFile(rememberedFile).catch(() => { /* the file may be gone; stay silent */ });
+    }
+  } finally {
+    skipHistory = prevSkip;
   }
-  // A contribution (the launchpad) may ask the kernel to switch workspaces.
-  if (!kernel._switchHooked) {
-    kernel._switchHooked = true;
-    bus.on('switch-workspace', ({ root }) => {
-      if (navigationBlocked()) return;
-      loadWorkspaces(root).catch(showError);
-    });
-  }
-  const wanted = selectPath || kernel.workspace?.root_path || uiMemory.read().workspace || kernel.workspaces[0]?.root_path;
-  kernel.workspace = kernel.workspaces.find(ws => ws.root_path === wanted) || kernel.workspaces[0] || null;
-  if (kernel.workspace) {
-    workspaceSelect.value = kernel.workspace.root_path;
-    uiMemory.patch(s => { s.workspace = kernel.workspace.root_path; });
-  }
-  kernel.selection = null;
-  kernel.card = null;
-  bus.emit('workspace', kernel.workspace);
-  await loadPrefs().catch(showError);
-  await recompose(false);
-  await renderSidebar().catch(showError);
-  const rememberedFile = kernel.workspace ? uiMemory.read().selection?.[kernel.workspace.root_path] : null;
-  if (rememberedFile) await selectFile(rememberedFile).catch(() => { /* the file may be gone; stay silent */ });
+  if (pushAfter) commitHistory('push');
 }
 
 function openWorkspaceDialog() {
@@ -976,4 +1205,60 @@ workspaceSelect.onchange = async () => {
   await loadWorkspaces(workspaceSelect.value).catch(showError);
 };
 
-loadWorkspaces().catch(showError);
+document.addEventListener('click', event => {
+  if (!stationBar.contains(event.target)) closeNavDrops();
+});
+
+async function applyState(state) {
+  skipHistory = true;
+  try {
+    kernel.boardPath = Array.isArray(state.path) ? state.path.map(String) : [];
+    const wantWs = state.ws || null;
+    const haveWs = kernel.workspace?.root_path || null;
+    if (wantWs !== haveWs) await loadWorkspaces(wantWs, { restoreMemory: false });
+    if (state.station && state.station !== kernel.activeStation) {
+      await activateStation(state.station);
+    } else {
+      bus.emit('board-path', { path: kernel.boardPath, source: 'history' });
+    }
+    const wantFile = state.file || null;
+    const haveFile = relativeFile(kernel.selection?.path);
+    if (wantFile && wantFile !== haveFile && kernel.workspace) {
+      const abs = wantFile.startsWith('/') ? wantFile : `${kernel.workspace.root_path}/${wantFile}`;
+      await selectFile(abs).catch(() => {});
+    } else if (!wantFile && kernel.selection) {
+      kernel.selection = null;
+      kernel.card = null;
+      bus.emit('selection', null);
+    }
+  } finally {
+    skipHistory = false;
+  }
+}
+
+window.addEventListener('popstate', event => {
+  applyState(event.state || readUrlState()).catch(showError);
+});
+
+async function boot() {
+  const state = readUrlState();
+  const fromUrl = urlHasNav(state);
+  skipHistory = true;
+  try {
+    kernel.boardPath = state.path || [];
+    await loadWorkspaces(state.ws, { restoreMemory: !fromUrl });
+    if (fromUrl) {
+      if (state.station && state.station !== kernel.activeStation) await activateStation(state.station);
+      else bus.emit('board-path', { path: kernel.boardPath, source: 'history' });
+      if (state.file && kernel.workspace) {
+        const abs = state.file.startsWith('/') ? state.file : `${kernel.workspace.root_path}/${state.file}`;
+        await selectFile(abs).catch(() => {});
+      }
+    }
+  } finally {
+    skipHistory = false;
+  }
+  commitHistory('replace');
+}
+
+boot().catch(showError);

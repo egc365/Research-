@@ -9,6 +9,17 @@ import { styleSticky, paletteEl } from '/contrib/lib/sticky.js';
 export function mount(el, ctx) {
   let disposed = false;
   let crumb = [];      // [{group_id, title}] from root down to the open group
+  function emitPath() {
+    ctx.bus.emit('board-path', { path: crumb.map(step => step.group_id) });
+  }
+  ctx.bus.on('board-path', msg => {
+    if (!msg || msg.source !== 'history') return;
+    const ids = msg.path || [];
+    if (!ids.length) { crumb = []; paint(); return; }
+    const found = findPath(data.groups, Number(ids[ids.length - 1]));
+    crumb = found ? found.trail : [];
+    paint();
+  });
   let data = { groups: [] };
   let dragCardId = null;
   let dragGroupId = null;
@@ -163,7 +174,7 @@ export function mount(el, ctx) {
     const h = div('display:flex;align-items:center;gap:4px;padding:4px 6px;border-bottom:1px solid #333');
     const title = div('font-weight:600;cursor:pointer;flex:1', group.title);
     title.title = 'Open';
-    title.onclick = () => { const found = findPath(data.groups, group.group_id); crumb = found ? found.trail : []; paint(); };
+    title.onclick = () => { const found = findPath(data.groups, group.group_id); crumb = found ? found.trail : []; emitPath(); paint(); };
     title.ondblclick = e => {
       e.stopPropagation();
       const v = prompt('Group title', group.title);
@@ -212,13 +223,13 @@ export function mount(el, ctx) {
     const bar = div('display:flex;align-items:center;gap:6px;padding:4px 2px;font-size:13px');
     const home = document.createElement('a');
     home.href = '#'; home.textContent = 'Board';
-    home.onclick = e => { e.preventDefault(); crumb = []; paint(); };
+    home.onclick = e => { e.preventDefault(); crumb = []; emitPath(); paint(); };
     bar.appendChild(home);
     crumb.forEach((step, i) => {
       bar.appendChild(div('opacity:.5', '›'));
       const a = document.createElement('a');
       a.href = '#'; a.textContent = step.title;
-      a.onclick = e => { e.preventDefault(); crumb = crumb.slice(0, i + 1); paint(); };
+      a.onclick = e => { e.preventDefault(); crumb = crumb.slice(0, i + 1); emitPath(); paint(); };
       bar.appendChild(a);
     });
     return bar;
@@ -255,7 +266,16 @@ export function mount(el, ctx) {
   function repaint() {
     if (!root()) { paint(); return; }
     call('tree')
-      .then(t => { if (!disposed) { data = t; paint(); } })
+      .then(t => {
+        if (disposed) return;
+        data = t;
+        const wanted = ctx.boardPath || [];
+        if (wanted.length) {
+          const found = findPath(data.groups, Number(wanted[wanted.length - 1]));
+          crumb = found ? found.trail : [];
+        }
+        paint();
+      })
       .catch(error => { if (!disposed) { el.textContent = `Board failed: ${error.message}`; } });
   }
 

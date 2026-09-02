@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { ControlStore } from '../src/store.mjs';
-import { catalogRows, defaultWiring, retired, stations, contributions, wiringRemovals } from '../plugins/registry.mjs';
+import { catalogRows, defaultWiring, retired, stations, contributions, wiringRemovals, stationEnables } from '../plugins/registry.mjs';
 
 function freshStore(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'research-ops-comp-'));
@@ -204,23 +204,33 @@ test('file-workbench is retired: no station row, no wiring, category on every su
   assert.ok(defaultWiring['dashboard-viewer'].main.includes('board-view'));
   assert.ok(!defaultWiring['dashboard-viewer'].main.includes('folder-cards'));
   assert.ok(!defaultWiring['dashboard-viewer'].main.includes('launchpad'));
+  assert.ok(!defaultWiring['dashboard-viewer'].main.includes('inbox'));
 });
 
-test('seeded dashboard is board, inbox, statistics; launchpad stays a wireable catalog contribution', t => {
+test('seeded dashboard is board then statistics; planning-board and project-creator are retired', t => {
   const { store } = freshStore(t);
   store.syncCatalog(catalogRows([]));
   store.seedStationWiring(defaultWiring);
   const wired = store.stationContributions('dashboard-viewer').map(r => r.contribution_id);
-  assert.deepEqual(wired, ['board-view', 'inbox', 'statistics-view']);
+  assert.deepEqual(wired, ['board-view', 'statistics-view']);
   const catalog = store.listCatalog();
   const launchpad = catalog.find(r => r.plugin_id === 'launchpad');
   assert.ok(launchpad);
   assert.equal(launchpad.plugin_kind, 'contribution');
   const desc = String(launchpad.manifest?.description || contributions.find(c => c.id === 'launchpad')?.description || '');
   assert.match(desc, /before a workspace|no-workspace/i);
-  assert.ok(stations.some(s => s.id === 'planning-board'));
-  assert.deepEqual(defaultWiring['planning-board'].main, ['board-view']);
+  assert.ok(!stations.some(s => s.id === 'planning-board'));
+  assert.ok(!stations.some(s => s.id === 'project-creator'));
+  assert.ok(retired.includes('planning-board'));
+  assert.ok(retired.includes('project-creator'));
+  assert.equal(defaultWiring['planning-board'], undefined);
+  assert.equal(defaultWiring['project-creator'], undefined);
+  const board = stations.find(s => s.id === 'dashboard-viewer');
+  assert.equal(board.label, 'Board');
   assert.ok(!retired.includes('launchpad'));
+  store.retirePlugins(retired);
+  assert.equal(store.listCatalog().some(r => r.plugin_id === 'planning-board'), false);
+  assert.equal(store.listCatalog().some(r => r.plugin_id === 'project-creator'), false);
 });
 
 test('catalog launchpad removal applies exactly once — an owner re-wire is never fought', t => {
@@ -242,4 +252,39 @@ test('catalog launchpad removal applies exactly once — an owner re-wire is nev
   store.setStationContribution({ stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'launchpad', sortOrder: 10 });
   store.applyWiringRemovals(wiringRemovals);
   assert.ok(wired().includes('launchpad'));
+});
+
+test('planning-board-only workspaces get dashboard-viewer enabled once', t => {
+  const { store, dir } = freshStore(t);
+  store.syncCatalog(catalogRows([]));
+  store.db.prepare(`
+    INSERT INTO ui_plugins(plugin_id,plugin_kind,label,version,manifest_json,enabled)
+    VALUES('planning-board','station','Board','1.0.0','{}',1)
+  `).run();
+  const onlyBoard = path.join(dir, 'only-board'); fs.mkdirSync(onlyBoard);
+  const withCurate = path.join(dir, 'with-curate'); fs.mkdirSync(withCurate);
+  const already = path.join(dir, 'already'); fs.mkdirSync(already);
+  const empty = path.join(dir, 'empty'); fs.mkdirSync(empty);
+  store.addWorkspace(onlyBoard);
+  store.addWorkspace(withCurate);
+  store.addWorkspace(already);
+  store.addWorkspace(empty);
+  store.setWorkspacePlugin({ rootPath: onlyBoard, pluginId: 'planning-board' });
+  store.setWorkspacePlugin({ rootPath: withCurate, pluginId: 'planning-board' });
+  store.setWorkspacePlugin({ rootPath: withCurate, pluginId: 'revision-center' });
+  store.setWorkspacePlugin({ rootPath: already, pluginId: 'planning-board' });
+  store.setWorkspacePlugin({ rootPath: already, pluginId: 'dashboard-viewer' });
+  const spec = stationEnables.find(s => s.id === '20260902-planning-board-to-dashboard');
+  assert.ok(spec, 'catalog exports the planning-board stationEnables row');
+  store.applyStationEnables(stationEnables);
+  const enabled = root => store.workspacePlugins(root).filter(r => r.plugin_kind === 'station').map(r => r.plugin_id).sort();
+  assert.ok(enabled(onlyBoard).includes('dashboard-viewer'));
+  assert.ok(!enabled(withCurate).includes('dashboard-viewer'));
+  assert.ok(enabled(already).includes('dashboard-viewer'));
+  assert.deepEqual(enabled(empty), []);
+  store.db.prepare("DELETE FROM workspace_plugins WHERE workspace_root=? AND plugin_id='dashboard-viewer'").run(path.resolve(onlyBoard));
+  store.applyStationEnables(stationEnables);
+  assert.ok(!enabled(onlyBoard).includes('dashboard-viewer'));
+  const meta = store.db.prepare("SELECT value FROM app_meta WHERE key=?").get('station-enable:20260902-planning-board-to-dashboard');
+  assert.ok(meta);
 });

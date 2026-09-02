@@ -34,9 +34,21 @@ body { margin: 0; background: var(--background); color: var(--text);
 .brand { font-weight: 600; letter-spacing: .02em; }
 .kernel-controls { display: flex; align-items: center; gap: 8px; flex: 1; }
 .plugins-btn { margin-left: auto; }
-.station-bar { display: flex; gap: 4px; flex-wrap: wrap; }
+.station-bar { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
 .station-bar button { border-radius: 999px; padding: 3px 12px; }
 .station-bar button.active { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.nav-cluster { display: flex; align-items: center; gap: 4px; padding: 0 8px;
+  border-left: 1px solid var(--line, #333); }
+.nav-cluster-label { font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+  opacity: .5; margin-right: 2px; }
+.nav-drop { position: relative; }
+.nav-drop-panel { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40;
+  min-width: 280px; max-width: 480px; max-height: 70vh; overflow: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: var(--spacing); box-shadow: 0 8px 24px #0006; }
+.nav-drop.open > button { border-color: var(--accent); }
+.launch-chip.active { border-color: var(--accent); }
+.board-frame-chrome { display: flex; justify-content: flex-end; margin-bottom: 6px; }
 
 /* ------------------------------------------------------------------ shell
    topbar / (sidebar | stage) / statusbar. The sidebar is kernel chrome:

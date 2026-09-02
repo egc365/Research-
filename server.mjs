@@ -17,10 +17,11 @@ await plugins.load();
 // Sync the declared catalog into the SQLite crosswalk. Owner state survives:
 // enabled flags are never overwritten, and default station wiring is seeded
 // only for stations with no wiring rows at all.
-const { catalogRows, defaultWiring, retired, sidebarDefaults, wiringAdditions, wiringRemovals } = await import('./plugins/registry.mjs');
-store.retirePlugins(retired);
+const { catalogRows, defaultWiring, retired, sidebarDefaults, wiringAdditions, wiringRemovals, stationEnables } = await import('./plugins/registry.mjs');
 store.sidebarDefaults = sidebarDefaults;
 store.syncCatalog(catalogRows(plugins.manifest()));
+store.applyStationEnables(stationEnables);
+store.retirePlugins(retired);
 store.seedStationWiring(defaultWiring);
 store.applyWiringAdditions(wiringAdditions);
 store.applyWiringRemovals(wiringRemovals);

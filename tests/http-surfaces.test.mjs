@@ -121,7 +121,7 @@ test('composition writes are unreachable from the agent surface', async () => {
     f.store.seedStationWiring(defaultWiring);
 
     for (const [pathName, body] of [
-      ['/api/composition/workspace', { rootPath: f.root, pluginId: 'planning-board' }],
+      ['/api/composition/workspace', { rootPath: f.root, pluginId: 'dashboard-viewer' }],
       ['/api/composition/station', { stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'card-rail' }]
     ]) {
       const denied = await call(f.agentBase, 'POST', pathName, body);
@@ -130,10 +130,10 @@ test('composition writes are unreachable from the agent surface', async () => {
     }
     // Nothing was enabled or rewired by the refused calls.
     assert.equal(f.store.composition(f.root).enabled.length, 0);
-    assert.deepEqual(f.store.stationContributions('dashboard-viewer').map(r => r.contribution_id), ['board-view', 'inbox', 'statistics-view']);
+    assert.deepEqual(f.store.stationContributions('dashboard-viewer').map(r => r.contribution_id), ['board-view', 'statistics-view']);
 
     // The owner surface can do both, and reading composition works on both surfaces.
-    assert.equal((await call(f.ownerBase, 'POST', '/api/composition/workspace', { rootPath: f.root, pluginId: 'planning-board' })).status, 200);
+    assert.equal((await call(f.ownerBase, 'POST', '/api/composition/workspace', { rootPath: f.root, pluginId: 'dashboard-viewer' })).status, 200);
     const seenByAgent = await (await fetch(`${f.agentBase}/api/composition?root=${encodeURIComponent(f.root)}`)).json();
     assert.equal(seenByAgent.enabled.length, 1);
   } finally { await f.close(); }

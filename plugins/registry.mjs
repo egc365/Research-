@@ -31,10 +31,10 @@ export const stations = [
     }
   },
   {
-    id: 'dashboard-viewer', label: 'Dashboard', version: '1.1.0',
+    id: 'dashboard-viewer', label: 'Board', version: '1.2.0',
     manifest: {
-      description: 'Workspace counts and recent activity, computed from the ledger — with the planning board mounted where the work starts.',
-      layout: 'main', slots: ['main'], icon: '📊', category: 'Plan'
+      description: 'The workspace board: groups of real files, links and notes. This is the frame a workspace lands on.',
+      layout: 'main', slots: ['main'], icon: '🗂', category: 'Plan'
     }
   },
   {
@@ -66,13 +66,6 @@ export const stations = [
     }
   },
   {
-    id: 'planning-board', label: 'Board', version: '1.1.0',
-    manifest: {
-      description: 'Groups and subgroups of cards that are real files, links and notes — horizontal for hierarchy, vertical for serial order; drill in, drag to arrange. Card workshop unwound.',
-      layout: 'main', slots: ['main'], icon: '🗂', category: 'Plan'
-    }
-  },
-  {
     id: 'gpu-monitor', label: 'GPU governor', version: '1.1.0',
     manifest: {
       description: 'Read-only window onto the gpu-governor daemon: current GPU snapshot, allowlist rules (new config path first, legacy fallback), and the tail of the enforcement event log. Enforcement verbs stay on the :7890 dashboard.',
@@ -86,13 +79,6 @@ export const stations = [
       layout: 'main', slots: ['main'], icon: '🎙', category: 'Monitor'
     }
   },
-  {
-    id: 'project-creator', label: 'Project creator', version: '1.1.0',
-    manifest: {
-      description: 'Start a new project folder inside the workspace with a seeded README, registered in the ledger from its first byte.',
-      layout: 'main', slots: ['main'], icon: '✚', category: 'Plan'
-    }
-  }
 ];
 
 export const contributions = [
@@ -148,7 +134,7 @@ export const defaultWiring = {
       'promotion-control'
     ]
   },
-  'dashboard-viewer': { main: ['board-view', 'inbox', 'statistics-view'] },
+  'dashboard-viewer': { main: ['board-view', 'statistics-view'] },
   'provenance-viewer': {
     main: ['revision-timeline'],
     side: ['actor-filter', 'provenance-block']
@@ -157,15 +143,13 @@ export const defaultWiring = {
   'health-monitor': { main: ['tool-health-view'] },
   'transcript-review': { main: ['transcript-search-view'] },
   'gpu-monitor': { main: ['gpu-governor-view'] },
-  'stt-monitor': { main: ['parakeet-view'] },
-  'planning-board': { main: ['board-view'] },
-  'project-creator': { main: ['project-create-form'] }
+  'stt-monitor': { main: ['parakeet-view'] }
 };
 
 // Ids the catalog used to ship and no longer does. Boot deletes their rows from
 // all three composition tables (ui_plugins, workspace_plugins,
 // station_contributions) so the plugin manager shows no ghosts.
-export const retired = ['label-designator', 'governance-center', 'file-workbench'];
+export const retired = ['label-designator', 'governance-center', 'file-workbench', 'planning-board', 'project-creator'];
 
 // One-shot wiring additions for stations that already have owner rows (the
 // seeder deliberately skips those). Each id is applied at most once ever —
@@ -181,7 +165,21 @@ export const wiringAdditions = [
 // never fought with.
 export const wiringRemovals = [
   { id: '20260902-folder-cards-off-dashboard', stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'folder-cards' },
-  { id: '20260902-launchpad-off-dashboard', stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'launchpad' }
+  { id: '20260902-launchpad-off-dashboard', stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'launchpad' },
+  { id: '20260902-inbox-off-dashboard', stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'inbox' }
+];
+
+// One-shot station enables. Workspaces that had only planning-board (and
+// other retiring Plan stations) enabled would otherwise land on the empty
+// frame after retirement. Each id runs at most once ever — recorded in
+// app_meta. Must run before retirePlugins, while the old rows still exist.
+export const stationEnables = [
+  {
+    id: '20260902-planning-board-to-dashboard',
+    fromPluginId: 'planning-board',
+    toPluginId: 'dashboard-viewer',
+    ignorePluginIds: ['planning-board', 'project-creator']
+  }
 ];
 
 // Default sidebar sections for a workspace with no sidebar_sections rows yet.

@@ -529,6 +529,36 @@ export class ControlStore {
     }
   }
 
+  // Enable toPluginId on workspaces that currently have fromPluginId and
+  // would otherwise have no surviving station once ignorePluginIds retire.
+  // Each spec.id runs at most once ever — recorded in app_meta.
+  applyStationEnables(enables = []) {
+    const seen = this.db.prepare('SELECT value FROM app_meta WHERE key=?');
+    const mark = this.db.prepare('INSERT OR REPLACE INTO app_meta(key,value) VALUES(?,?)');
+    const enabledStations = this.db.prepare(`
+      SELECT wp.workspace_root, wp.plugin_id
+      FROM workspace_plugins wp
+      JOIN ui_plugins up ON up.plugin_id = wp.plugin_id
+      WHERE wp.enabled=1 AND up.plugin_kind='station'
+    `);
+    for (const spec of enables) {
+      const key = `station-enable:${spec.id}`;
+      if (seen.get(key)) continue;
+      const ignore = new Set(spec.ignorePluginIds || [spec.fromPluginId]);
+      const byRoot = new Map();
+      for (const row of enabledStations.all()) {
+        (byRoot.get(row.workspace_root) ?? (byRoot.set(row.workspace_root, []), byRoot.get(row.workspace_root))).push(row.plugin_id);
+      }
+      for (const [root, ids] of byRoot) {
+        if (!ids.includes(spec.fromPluginId)) continue;
+        if (ids.includes(spec.toPluginId)) continue;
+        if (ids.some(id => !ignore.has(id))) continue;
+        this.setWorkspacePlugin({ rootPath: root, pluginId: spec.toPluginId, enabled: true });
+      }
+      mark.run(key, new Date().toISOString());
+    }
+  }
+
   // An owner-defined station: a ui_plugins row like any shipped station, so
   // the kernel renders it and the plugin manager wires it — domain-specific
   // behavior arrives by choosing contributions, not by writing a component.
