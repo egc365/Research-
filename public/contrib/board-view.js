@@ -19,44 +19,45 @@ export function mount(el, ctx) {
   let addKind = 'note';
   let addRef = '';
   let addBody = '';
-  let addColor = DEFAULT_COLOR;
+  let addColor = null;
+  let editColor = undefined;
+  let namingParent = undefined;
+  let namingTitle = '';
+  let renamingGroupId = null;
+  let pendingRemove = null;
+  let removeTimer = 0;
+  let drillTimer = 0;
+  let palPointer = false;
   let dragCardId = null;
   let dragGroupId = null;
 
   const root = () => ctx.workspace?.root_path;
   const call = (action, payload = {}) => ctx.action('board', action, { rootPath: root(), ...payload });
-  const editorOpen = () => editingCardId != null || addingGroupId != null;
+  const editorOpen = () => editingCardId != null || addingGroupId != null
+    || renamingGroupId != null || namingParent !== undefined;
   const mutate = (action, payload) => call(action, payload)
     .then(repaint)
     .catch(error => { ctx.notify(error.message, 'error'); repaint(); });
 
-  function fileAbsPath(ref) {
-    const r = root();
-    const key = String(ref || '');
-    if (!key) return '';
-    if (r && (key === r || key.startsWith(r + '/'))) return key;
-    if (r && !key.startsWith('/')) return `${r}/${key}`;
-    return key;
+  function stopEditing() {
+    editingCardId = null;
+    addingGroupId = null;
+    renamingGroupId = null;
+    namingParent = undefined;
+    namingTitle = '';
+    editColor = undefined;
   }
 
   function resolveColor(card) {
     if (card.color) return card.color;
     if (card.kind === 'file') {
-      const abs = fileAbsPath(card.ref);
+      const r = root();
+      const key = String(card.ref || '');
+      const abs = r && key && !key.startsWith('/') ? `${r}/${key}` : key;
       const pathLabels = labels[abs] || labels[card.ref] || [];
       return colorForLabel(pathLabels[0]?.label);
     }
     return DEFAULT_COLOR;
-  }
-
-  // add-card stores the first line in title and the full text in ref; rename
-  // later writes both. Prefer the longer complete note.
-  function noteText(card) {
-    const title = card.title || '';
-    const ref = card.ref || '';
-    if (ref && title && (ref === title || ref.startsWith(title + '\n'))) return ref;
-    if (title && ref && (title === ref || title.startsWith(ref + '\n'))) return title;
-    return title || ref;
   }
 
   function faceTitle(card) {
@@ -67,7 +68,7 @@ export function mount(el, ctx) {
     if (card.kind === 'link') {
       try { return new URL(card.ref).host || card.ref; } catch { return card.ref; }
     }
-    return noteText(card).split('\n')[0] || '';
+    return String(card.ref || '').split('\n')[0] || '';
   }
 
   function faceBody(card) {
@@ -76,7 +77,7 @@ export function mount(el, ctx) {
       return stickies.notes?.[key]?.text || '';
     }
     if (card.kind === 'link') return card.title || '';
-    const text = noteText(card);
+    const text = card.ref || '';
     const i = text.indexOf('\n');
     return i === -1 ? '' : text.slice(i + 1);
   }
@@ -87,7 +88,7 @@ export function mount(el, ctx) {
       return stickies.notes?.[key]?.text || '';
     }
     if (card.kind === 'link') return card.title || '';
-    return noteText(card);
+    return card.ref || '';
   }
 
   function findPath(groups, id, trail = []) {
@@ -167,31 +168,85 @@ export function mount(el, ctx) {
     return b;
   };
 
+  function removeBtn(kind, id, idleTitle) {
+    const armed = pendingRemove && pendingRemove.kind === kind && pendingRemove.id === id;
+    const b = btn(armed ? 'delete?' : '✕', armed ? 'Confirm remove' : idleTitle, () => {
+      if (pendingRemove && pendingRemove.kind === kind && pendingRemove.id === id) {
+        clearTimeout(removeTimer);
+        pendingRemove = null;
+        mutate('remove', kind === 'group' ? { groupId: id } : { cardId: id });
+        return;
+      }
+      clearTimeout(removeTimer);
+      pendingRemove = { kind, id };
+      b.textContent = 'delete?';
+      b.title = 'Confirm remove';
+      removeTimer = setTimeout(() => {
+        if (pendingRemove && pendingRemove.kind === kind && pendingRemove.id === id) {
+          pendingRemove = null;
+          if (b.isConnected) { b.textContent = '✕'; b.title = idleTitle; }
+          else if (!disposed) paint();
+        }
+      }, 2000);
+    });
+    return b;
+  }
+
+  function groupNameEl(parentId) {
+    const form = document.createElement('form');
+    form.className = 'board-add-group';
+    form.style.cssText = 'display:inline-flex;margin-left:4px';
+    isolateStickyPointer(form);
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      const t = namingTitle.trim();
+      if (!t) return;
+      namingParent = undefined;
+      namingTitle = '';
+      mutate('add-group', parentId == null ? { title: t } : { parentId, title: t });
+    });
+    form.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { e.preventDefault(); namingParent = undefined; namingTitle = ''; paint(); }
+    });
+    const input = document.createElement('input');
+    input.className = 'board-inline-name';
+    input.value = namingTitle;
+    input.placeholder = 'Group title';
+    input.style.cssText = 'width:120px;background:rgba(255,255,255,.55);color:#222;border:1px solid rgba(0,0,0,.3);border-radius:4px;padding:2px 6px;font:inherit';
+    input.oninput = () => { namingTitle = input.value; };
+    form.appendChild(input);
+    return form;
+  }
+
   function saveCardBody(card, text) {
+    const colorPick = editColor;
+    editColor = undefined;
     editingCardId = null;
+    const next = { ...card, color: colorPick !== undefined ? colorPick : card.color };
+    const writes = [];
+    if (colorPick !== undefined) writes.push(call('set-color', { cardId: card.card_id, color: colorPick }));
     if (card.kind === 'file') {
       const key = stickyKey(root(), card.ref);
       if (key && !key.startsWith('/')) {
-        const color = card.color || stickies.notes?.[key]?.color || DEFAULT_COLOR;
-        ctx.action('stickies', 'set', { rootPath: root(), path: key, text, color })
-          .then(repaint)
-          .catch(error => { ctx.notify(error.message, 'error'); repaint(); });
-        return;
+        writes.push(ctx.action('stickies', 'set', { rootPath: root(), path: key, text, color: resolveColor(next) }));
       }
-      paint();
+      if (!writes.length) { paint(); return; }
+      Promise.all(writes).then(repaint).catch(error => { ctx.notify(error.message, 'error'); repaint(); });
       return;
     }
     const v = text.trim();
-    if (v) mutate('rename', { cardId: card.card_id, title: v });
-    else paint();
+    if (v) writes.push(call('rename', { cardId: card.card_id, title: v }));
+    if (!writes.length) { paint(); return; }
+    Promise.all(writes).then(repaint).catch(error => { ctx.notify(error.message, 'error'); repaint(); });
   }
 
   function cardEl(card, group) {
     const c = document.createElement('div');
     c.className = 'board-card';
     c.dataset.kind = card.kind;
-    styleSticky(c, resolveColor(card));
     const editing = editingCardId === card.card_id;
+    const shownColor = editing && editColor !== undefined ? editColor : card.color;
+    styleSticky(c, resolveColor({ ...card, color: shownColor }));
     c.draggable = !editorOpen();
     if (editing) c.draggable = false;
     c.addEventListener('dragstart', e => {
@@ -249,7 +304,7 @@ export function mount(el, ctx) {
         if (e.key === 'Escape') {
           e.preventDefault();
           cancelled = true;
-          editingCardId = null;
+          stopEditing();
           paint();
         }
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -259,28 +314,46 @@ export function mount(el, ctx) {
       };
       area.onblur = () => {
         if (cancelled || !area.isConnected) return;
+        if (palPointer) {
+          palPointer = false;
+          queueMicrotask(() => { if (area.isConnected) area.focus(); });
+          return;
+        }
         saveCardBody(card, area.value);
       };
       body.appendChild(area);
     } else {
       body.textContent = faceBody(card);
-      body.onclick = () => { editingCardId = card.card_id; paint(); };
+      body.onclick = () => { stopEditing(); editingCardId = card.card_id; paint(); };
     }
     c.appendChild(body);
 
     const palWrap = document.createElement('div');
     palWrap.className = 'board-card-palette';
     isolateStickyPointer(palWrap);
-    palWrap.appendChild(paletteEl(card.color, color => mutate('set-color', { cardId: card.card_id, color })));
+    palWrap.addEventListener('pointerdown', e => { e.preventDefault(); palPointer = true; });
+    const mountPalette = () => {
+      const current = editing && editColor !== undefined ? editColor : card.color;
+      palWrap.replaceChildren(paletteEl(current, color => {
+        if (editingCardId === card.card_id) {
+          editColor = color;
+          c.style.background = resolveColor({ ...card, color });
+          mountPalette();
+          return;
+        }
+        mutate('set-color', { cardId: card.card_id, color });
+      }), removeBtn('card', card.card_id, 'Remove card'));
+    };
+    mountPalette();
     c.appendChild(palWrap);
     return c;
   }
 
   function openAdd(group) {
-    editingCardId = null;
+    stopEditing();
     addingGroupId = group.group_id;
     addBody = '';
-    addColor = DEFAULT_COLOR;
+    addColor = null;
     if (ctx.selection) {
       addKind = 'file';
       addRef = stickyKey(root(), ctx.selection.path);
@@ -321,7 +394,7 @@ export function mount(el, ctx) {
       const key = stickyKey(root(), raw);
       if (key && !key.startsWith('/')) {
         try {
-          await ctx.action('stickies', 'set', { rootPath: root(), path: key, text: body, color: color || DEFAULT_COLOR });
+          await ctx.action('stickies', 'set', { rootPath: root(), path: key, text: body, color: resolveColor({ kind: 'file', ref, color }) });
         } catch (error) { ctx.notify(error.message, 'error'); }
       }
     }
@@ -329,14 +402,14 @@ export function mount(el, ctx) {
     addKind = 'note';
     addRef = '';
     addBody = '';
-    addColor = DEFAULT_COLOR;
+    addColor = null;
     repaint();
   }
 
   function addFormEl(group) {
     const form = document.createElement('form');
     form.className = 'board-add-card';
-    styleSticky(form, addColor || DEFAULT_COLOR);
+    styleSticky(form, resolveColor({ kind: addKind, ref: addRef, color: addColor }));
     isolateStickyPointer(form);
     form.addEventListener('submit', e => { e.preventDefault(); submitAdd(group); });
     form.addEventListener('keydown', e => {
@@ -389,25 +462,58 @@ export function mount(el, ctx) {
 
   function headerEl(group) {
     const h = div('display:flex;align-items:center;gap:4px;padding:4px 6px;border-bottom:1px solid #333');
-    const title = div('font-weight:600;cursor:pointer;flex:1', group.title);
-    title.title = 'Open';
-    title.onclick = () => { const found = findPath(data.groups, group.group_id); crumb = found ? found.trail : []; paint(); };
-    title.ondblclick = e => {
-      e.stopPropagation();
-      const v = prompt('Group title', group.title);
-      if (v && v.trim() && v.trim() !== group.title) mutate('rename', { groupId: group.group_id, title: v.trim() });
-    };
-    h.appendChild(title);
+    if (renamingGroupId === group.group_id) {
+      const input = document.createElement('input');
+      input.className = 'board-group-title-edit';
+      input.value = group.title;
+      input.style.cssText = 'flex:1;background:rgba(255,255,255,.55);color:#222;border:1px solid rgba(0,0,0,.3);border-radius:4px;padding:2px 6px;font:inherit';
+      isolateStickyPointer(input);
+      const save = () => {
+        const v = input.value.trim();
+        renamingGroupId = null;
+        if (v && v !== group.title) mutate('rename', { groupId: group.group_id, title: v });
+        else paint();
+      };
+      input.onkeydown = e => {
+        if (e.key === 'Enter') { e.preventDefault(); save(); }
+        if (e.key === 'Escape') { e.preventDefault(); renamingGroupId = null; paint(); }
+      };
+      input.onblur = () => { if (renamingGroupId === group.group_id && input.isConnected) save(); };
+      h.appendChild(input);
+    } else {
+      const title = div('font-weight:600;cursor:pointer;flex:1', group.title);
+      title.title = 'Open';
+      // Delay the drill so a double-click can rename without the first click painting the title away.
+      title.onclick = e => {
+        if (e.detail !== 1) return;
+        clearTimeout(drillTimer);
+        drillTimer = setTimeout(() => {
+          const found = findPath(data.groups, group.group_id);
+          crumb = found ? found.trail : [];
+          paint();
+        }, 250);
+      };
+      title.ondblclick = e => {
+        e.preventDefault();
+        e.stopPropagation();
+        clearTimeout(drillTimer);
+        stopEditing();
+        renamingGroupId = group.group_id;
+        paint();
+      };
+      h.appendChild(title);
+    }
     h.appendChild(btn('＋', 'Add card', () => openAdd(group)));
     h.appendChild(btn('⊞', 'Add subgroup', () => {
-      const t = prompt('Subgroup title');
-      if (t && t.trim()) mutate('add-group', { parentId: group.group_id, title: t.trim() });
+      stopEditing();
+      namingParent = group.group_id;
+      namingTitle = '';
+      paint();
     }));
+    if (namingParent === group.group_id) h.appendChild(groupNameEl(group.group_id));
     h.appendChild(btn('⇄', `Orientation: ${group.orientation} (toggle)`, () =>
       mutate('set-orientation', { groupId: group.group_id, orientation: group.orientation === 'vertical' ? 'horizontal' : 'vertical' })));
-    h.appendChild(btn('✕', 'Remove group', () => {
-      if (confirm(`Remove "${group.title}" and everything inside it?`)) mutate('remove', { groupId: group.group_id });
-    }));
+    h.appendChild(removeBtn('group', group.group_id, 'Remove group'));
     return h;
   }
 
@@ -480,14 +586,18 @@ export function mount(el, ctx) {
       top.addEventListener('drop', e => { e.preventDefault(); if (dragGroupId != null) dropGroup(null); });
       el.appendChild(top);
       const add = btn('＋ group', 'Add top-level group', () => {
-        const t = prompt('Group title');
-        if (t && t.trim()) mutate('add-group', { title: t.trim() });
+        stopEditing();
+        namingParent = null;
+        namingTitle = '';
+        paint();
       });
       add.style.margin = '6px';
       el.appendChild(add);
+      if (namingParent === null) el.appendChild(groupNameEl(null));
     }
     const focus = el.querySelector('.board-card textarea')
-      || el.querySelector('.board-add-card input, .board-add-card textarea');
+      || el.querySelector('.board-add-card input, .board-add-card textarea')
+      || el.querySelector('.board-group-title-edit, .board-inline-name');
     if (focus) queueMicrotask(() => focus.focus());
   }
 
@@ -502,7 +612,13 @@ export function mount(el, ctx) {
       .catch(error => { if (!disposed) { el.textContent = `Board failed: ${error.message}`; } });
   }
 
-  ctx.bus.on('workspace', () => { crumb = []; editingCardId = null; addingGroupId = null; repaint(); });
+  ctx.bus.on('workspace', () => {
+    crumb = [];
+    stopEditing();
+    pendingRemove = null;
+    clearTimeout(removeTimer);
+    repaint();
+  });
   repaint();
-  return () => { disposed = true; };
+  return () => { disposed = true; clearTimeout(removeTimer); clearTimeout(drillTimer); };
 }
