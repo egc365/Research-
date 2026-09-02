@@ -329,35 +329,37 @@ test('the example of done: three lanes at the points the owner dropped them, pos
   const row = db.prepare('SELECT slug, x, y, w FROM board_lanes WHERE lane_id=?').get(feature.lane_id);
   db.close();
   assert.deepEqual({ ...row }, { slug: 'feature', x: 24, y: 420, w: 560 });
-  // No position given: right of the placed lanes (testing ends at 620 + 280), never on top of one.
+  // No position given: the canvas corner, nudged right past every column it would overlap
+  // (hello 24..304, feature 24..584, testing 620..900), never on top of one.
   const later = await act(ws, 'add-lane', { name: 'later' });
   assert.deepEqual([later.x, later.y], [924, 24]);
-  const inner = await act(ws, 'add-lane', { name: 'inner', parentLaneId: testing.lane_id, x: 5, y: 5, w: 100 });
-  assert.deepEqual([inner.x, inner.y, inner.w], [null, null, null]);
+  const inner = await act(ws, 'add-lane', { name: 'inner', parentLaneId: testing.lane_id, x: 5, y: 5, w: 200 });
+  assert.deepEqual([inner.x, inner.y, inner.w], [null, null, 200], 'a nested lane has no position; its w rides along');
   await assert.rejects(act(ws, 'add-lane', { name: 'off', x: -3, y: 0 }), e => e.code === 'BOARD_BAD_INPUT' && /pixels/.test(e.message));
+  await assert.rejects(act(ws, 'add-lane', { name: 'thin', w: 100 }), e => e.code === 'BOARD_BAD_INPUT' && /180 and 4000/.test(e.message));
 });
 
-test('move-lane: onto the canvas at a point makes the lane top-level there; into a parent clears the position', async t => {
+test('move-lane: onto the canvas at a point makes the lane top-level there; into a parent clears the position and keeps w', async t => {
   const ws = workspace(t);
   const hello = await act(ws, 'add-lane', { name: 'hello', x: 24, y: 80 });
   const feature = await act(ws, 'add-lane', { name: 'feature', x: 620, y: 80, w: 560 });
   const inside = await act(ws, 'move-lane', { laneId: feature.lane_id, parentLaneId: hello.lane_id });
-  assert.deepEqual([inside.parent_lane_id, inside.x, inside.y, inside.w, inside.sort_order], [hello.lane_id, null, null, null, 100]);
+  assert.deepEqual([inside.parent_lane_id, inside.x, inside.y, inside.w, inside.sort_order], [hello.lane_id, null, null, 560, 100]);
   const out = await act(ws, 'move-lane', { laneId: feature.lane_id, parentLaneId: null, x: 24, y: 420 });
-  assert.deepEqual([out.parent_lane_id, out.x, out.y, out.w], [null, 24, 420, null]);
+  assert.deepEqual([out.parent_lane_id, out.x, out.y, out.w], [null, 24, 420, 560], 'it comes back as it left');
   assert.equal(out.sort_order, hello.sort_order + 10, 'back on the canvas it orders after the lanes there');
   // A pure move keeps the sort order; a move with no point keeps the position.
   const moved = await act(ws, 'move-lane', { laneId: feature.lane_id, parentLaneId: null, x: 30, y: 430 });
   assert.deepEqual([moved.sort_order, moved.x, moved.y], [out.sort_order, 30, 430]);
   const same = await act(ws, 'move-lane', { laneId: feature.lane_id, parentLaneId: null });
   assert.deepEqual([same.x, same.y], [30, 430]);
-  // A nested lane dragged out with no point lands right of the placed lanes.
+  // A nested lane dragged out with no point lands past the columns in its way (feature is 560 wide at x 30).
   const nested = await act(ws, 'add-lane', { name: 'nested', parentLaneId: hello.lane_id });
   const placed = await act(ws, 'move-lane', { laneId: nested.lane_id, parentLaneId: null });
-  assert.deepEqual([placed.x, placed.y], [30 + 280 + 24, 24]);
+  assert.deepEqual([placed.x, placed.y], [30 + 560 + 24, 24]);
   await assert.rejects(act(ws, 'move-lane', { laneId: nested.lane_id, parentLaneId: null, x: 'far', y: 1 }), e => e.code === 'BOARD_BAD_INPUT');
   const { lanes } = await act(ws, 'tree');
-  assert.deepEqual(lanes.map(l => [l.name, l.x, l.y]), [['hello', 24, 80], ['feature', 30, 430], ['nested', 334, 24]]);
+  assert.deepEqual(lanes.map(l => [l.name, l.x, l.y]), [['hello', 24, 80], ['feature', 30, 430], ['nested', 614, 24]]);
 });
 
 test('migration: a board from before the canvas lays its top-level lanes out left to right once and slugs them', async t => {
@@ -408,6 +410,9 @@ test('set-width persists on a top-level lane and is refused on a nested one', as
   assert.equal((await act(ws, 'tree')).lanes[0].w, 560);
   assert.equal((await act(ws, 'set-width', { laneId: top.lane_id, w: null })).w, null);
   await assert.rejects(act(ws, 'set-width', { laneId: top.lane_id, w: 0 }), e => e.code === 'BOARD_BAD_INPUT');
+  await assert.rejects(act(ws, 'set-width', { laneId: top.lane_id, w: 179 }), e => e.code === 'BOARD_BAD_INPUT' && /180 and 4000/.test(e.message));
+  await assert.rejects(act(ws, 'set-width', { laneId: top.lane_id, w: 4001 }), e => e.code === 'BOARD_BAD_INPUT' && /180 and 4000/.test(e.message));
+  assert.equal((await act(ws, 'set-width', { laneId: top.lane_id, w: 4000 })).w, 4000);
   await assert.rejects(act(ws, 'set-width', { laneId: inner.lane_id, w: 200 }), e => e.code === 'BOARD_BAD_INPUT' && /top-level/.test(e.message));
 });
 
@@ -604,4 +609,16 @@ test('face is null until flipped, then persists on file, note, and folder cards'
   assert.deepEqual(cards.map(c => [c.kind, c.face]), [['file', 'sticky'], ['note', null], ['folder', 'card']]);
   await assert.rejects(act(ws, 'update-card', { cardId: file.card_id, face: 'back' }), e => e.code === 'BOARD_BAD_INPUT');
   await assert.rejects(act(ws, 'update-card', { cardId: file.card_id, icon: 'xyz' }), e => e.code === 'BOARD_BAD_INPUT');
+});
+
+test('landingSpot: a new lane lands at the view corner, nudged right past the boxes it would overlap', async () => {
+  const { landingSpot, LANE_GAP } = await import('../public/contrib/lib/board-rules.js');
+  assert.deepEqual(landingSpot([]), { x: LANE_GAP, y: LANE_GAP });
+  // Rows without heights are columns: past both, never between them.
+  assert.deepEqual(landingSpot([{ x: 24, y: 24, w: null }, { x: 328, y: 600, w: 100 }]), { x: 452, y: 24 });
+  // Measured boxes: a lane below the corner's row is not in the way; one in it is.
+  const boxes = [{ x: 24, y: 24, w: 280, h: 300 }, { x: 24, y: 700, w: 280, h: 100 }, { x: 328, y: 40, w: 280, h: 50 }];
+  assert.deepEqual(landingSpot(boxes, { x: 24, y: 24 }), { x: 632, y: 24 });
+  assert.deepEqual(landingSpot(boxes, { x: 324, y: 424 }), { x: 324, y: 424 }, 'a scrolled view with free space keeps its corner');
+  assert.deepEqual(landingSpot(boxes, { x: 30, y: 650 }), { x: 328, y: 650 }, 'the lane at y 700 is in the row, so past it');
 });

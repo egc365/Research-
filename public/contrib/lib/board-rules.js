@@ -13,10 +13,13 @@ export const MAX_FIELDS = 4;
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 export const NAMED_ICONS = ['file', 'folder', 'note', 'link', 'image'];
 const ORIENTATIONS = ['horizontal', 'vertical'];
-// The canvas (ADR-043): a top-level lane sits at x, y in canvas pixels; a
-// lane without a position is placed to the right of the placed ones.
+// The canvas (ADR-043): a top-level lane sits at x, y in canvas pixels. An
+// unsized lane is LANE_W wide (the stylesheet says the same), so its box has
+// one size wherever it sits; the resize edge sets w between the two bounds.
 export const LANE_GAP = 24;
-const LANE_DEFAULT_W = 280;
+export const LANE_W = 280;
+export const LANE_MIN_W = 180;
+export const LANE_MAX_W = 4000;
 
 const IMAGE_EXT = { png: 'png', jpeg: 'jpg', jpg: 'jpg', gif: 'gif', webp: 'webp', 'svg+xml': 'svg', bmp: 'bmp', avif: 'avif' };
 
@@ -71,16 +74,26 @@ export function parseCoord(raw, what) {
   return Math.round(n);
 }
 
-// Where a new top-level lane lands: right of every placed lane on the surface.
-export function nextSpot(placed) {
-  let right = 0;
-  for (const l of placed) if (l.x != null) right = Math.max(right, l.x + (l.w ?? LANE_DEFAULT_W));
-  return { x: right ? right + LANE_GAP : LANE_GAP, y: LANE_GAP };
+// Where a new top-level lane lands: at `at` (the view's corner plus the
+// gap, or the canvas corner), nudged right past every box it would overlap.
+// A box is { x, y, w, h }; a row without h (the server knows no heights)
+// counts as a full-height column.
+export function landingSpot(boxes, at = { x: LANE_GAP, y: LANE_GAP }) {
+  const spot = { x: at.x, y: at.y };
+  const hits = b => b.x != null && b.x < spot.x + LANE_W && spot.x < b.x + (b.w ?? LANE_W)
+    && (b.h == null || (b.y < spot.y + LANE_MIN_W && spot.y < b.y + b.h));
+  for (let guard = 0; guard < boxes.length; guard++) {
+    const hit = boxes.filter(hits);
+    if (!hit.length) break;
+    spot.x = Math.max(...hit.map(b => b.x + (b.w ?? LANE_W))) + LANE_GAP;
+  }
+  return spot;
 }
 
 // Rows from before the canvas: top-level lanes with no position take the
-// next spot in sort order, lanes with no slug take one. Returns the rows it
-// changed so a caller can write them once.
+// next spot in sort order, lanes with no slug take one, and memory rows that
+// never had the keys get them as null (the whiteboard's first load after
+// the upgrade). Returns the rows it changed so a caller can write them once.
 export function settleLanes(lanes) {
   const changed = new Set();
   const ordered = [...lanes].sort((a, b) => a.sort_order - b.sort_order || a.lane_id - b.lane_id);
@@ -95,7 +108,7 @@ export function settleLanes(lanes) {
       if (l.x === undefined || l.y === undefined || l.w === undefined) { l.x ??= null; l.y ??= null; l.w ??= null; changed.add(l); }
       if (!l.slug) { l.slug = laneSlug(l.name, taken); taken.add(l.slug); changed.add(l); }
       if (l.parent_lane_id == null && l.x == null) {
-        Object.assign(l, nextSpot(rows.filter(r => r.parent_lane_id == null)));
+        Object.assign(l, landingSpot(rows.filter(r => r.parent_lane_id == null)));
         changed.add(l);
       }
     }
@@ -183,6 +196,15 @@ export function parseWidth(raw) {
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) throw fail('BOARD_BAD_INPUT', 'Width is a positive number of pixels');
   return Math.round(n);
+}
+
+// A lane's width, held to the range the resize edge allows; null means LANE_W.
+export function parseLaneWidth(raw) {
+  const w = parseWidth(raw);
+  if (w != null && (w < LANE_MIN_W || w > LANE_MAX_W)) {
+    throw fail('BOARD_BAD_INPUT', `A lane is between ${LANE_MIN_W} and ${LANE_MAX_W} pixels wide`);
+  }
+  return w;
 }
 
 export function viewCard(row) {

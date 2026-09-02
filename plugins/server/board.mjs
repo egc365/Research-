@@ -11,9 +11,9 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
   fail, needName, needLaneName, idOrNull, relPath, childRel,
-  parseColor, parseOrientation, parseFace, parseIcon, parseFields, parseWidth, parseCoord, defaultIcon, viewCard,
+  parseColor, parseOrientation, parseFace, parseIcon, parseFields, parseWidth, parseLaneWidth, parseCoord, defaultIcon, viewCard,
   nextOrder, laneDepth, subtreeHeight, assertDepth, assertNoCycle, imageDataUrl, imageFileName, nestTree,
-  slugText, laneSlug, nextSpot, settleLanes
+  slugText, laneSlug, landingSpot, settleLanes
 } from '../../public/contrib/lib/board-rules.js';
 import { plugin as stickies } from './stickies.mjs';
 
@@ -213,15 +213,16 @@ function slugOn(db, surface, name, exceptId = null) {
   return laneSlug(name, new Set(taken.map(r => r.slug)));
 }
 
-// A nested lane has no position; a top-level one without a given spot lands
-// right of the placed lanes.
+// A nested lane has no position (its w rides along, ignored until it is
+// top-level again); a top-level one without a given spot lands past the
+// placed lanes.
 function insertLane(db, { surface, parentLaneId, name, orientation, x = null, y = null, w = null, now }) {
-  let spot = { x: null, y: null, w: null };
+  let spot = { x: null, y: null, w };
   if (parentLaneId != null) {
     laneOn(db, parentLaneId, surface);
     assertDepth(laneDepth(parentLaneId, parentOf(db)) + 1);
   } else {
-    spot = x == null || y == null ? { ...nextSpot(topLanes(db, surface)), w } : { x, y, w };
+    spot = x == null || y == null ? { ...landingSpot(topLanes(db, surface)), w } : { x, y, w };
   }
   const sortOrder = nextLaneOrder(db, surface, parentLaneId);
   const { lastInsertRowid } = db.prepare(
@@ -318,7 +319,7 @@ async function saveSketch(db, ctx, dest, model) {
       orientation: l.orientation === 'horizontal' ? 'horizontal' : 'vertical',
       x: parentLaneId == null ? parseCoord(l.x, 'x') : null,
       y: parentLaneId == null ? parseCoord(l.y, 'y') : null,
-      w: parentLaneId == null ? parseWidth(l.w) : null,
+      w: parseLaneWidth(l.w),
       now: ctx.now
     });
     laneOf.set(id, row);
@@ -453,7 +454,7 @@ export const plugin = {
         orientation: payload.orientation == null ? 'vertical' : parseOrientation(payload.orientation),
         x: parseCoord(payload.x, 'x'),
         y: parseCoord(payload.y, 'y'),
-        w: parseWidth(payload.w),
+        w: parseLaneWidth(payload.w),
         now
       });
     }
@@ -512,7 +513,7 @@ export const plugin = {
     if (action === 'set-width') {
       const lane = mustLane(db, Number(payload.laneId));
       if (lane.parent_lane_id != null) throw fail('BOARD_BAD_INPUT', 'Only a top-level lane has a width; a nested lane flows in its parent');
-      db.prepare('UPDATE board_lanes SET w=? WHERE lane_id=?').run(parseWidth(payload.w), lane.lane_id);
+      db.prepare('UPDATE board_lanes SET w=? WHERE lane_id=?').run(parseLaneWidth(payload.w), lane.lane_id);
       return mustLane(db, lane.lane_id);
     }
 
@@ -561,12 +562,13 @@ export const plugin = {
       return mustCard(db, card.card_id);
     }
 
-    // Into a parent: the lane flows there and drops its position. Onto the
-    // canvas: it sits at x, y (the payload's, else its own, else the next spot).
+    // Into a parent: the lane flows there and drops its position, keeping
+    // its w for the way back. Onto the canvas: it sits at x, y (the
+    // payload's, else its own, else the landing spot).
     if (action === 'move-lane') {
       const lane = mustLane(db, Number(payload.laneId));
       const toParentId = idOrNull(payload.parentLaneId);
-      let spot = { x: null, y: null, w: null };
+      let spot = { x: null, y: null, w: lane.w };
       if (toParentId != null) {
         laneOn(db, toParentId, lane.surface);
         assertNoCycle(lane.lane_id, toParentId, parentOf(db));
@@ -576,7 +578,7 @@ export const plugin = {
         const y = parseCoord(payload.y, 'y');
         spot = x != null && y != null ? { x, y, w: lane.w }
           : lane.x != null ? { x: lane.x, y: lane.y, w: lane.w }
-            : { ...nextSpot(topLanes(db, lane.surface).filter(l => l.lane_id !== lane.lane_id)), w: lane.w };
+            : { ...landingSpot(topLanes(db, lane.surface).filter(l => l.lane_id !== lane.lane_id)), w: lane.w };
       }
       const sortOrder = payload.sortOrder != null ? Number(payload.sortOrder)
         : toParentId === lane.parent_lane_id ? lane.sort_order : nextLaneOrder(db, lane.surface, toParentId);

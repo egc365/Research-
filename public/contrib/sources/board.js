@@ -13,7 +13,7 @@
 // Save to project.
 import { styleSticky, paletteEl, stickyKey, isolateStickyPointer, colorForLabel, DEFAULT_STICKY_COLOR } from '../lib/sticky.js';
 import { boardStore } from '../lib/board-store.js';
-import { MAX_DEPTH, LANE_GAP } from '../lib/board-rules.js';
+import { MAX_DEPTH, LANE_GAP, LANE_MIN_W, LANE_MAX_W, landingSpot } from '../lib/board-rules.js';
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg)$/i;
 const CARD_MIME = 'x-ro-card';
@@ -507,7 +507,7 @@ export function open(ctx, config, view) {
       const name = input.value.trim();
       if (!name) { ctx.notify('A lane needs a name', 'error'); return; }
       namingLane = null;
-      mutate('add-lane', { parentLaneId: parentLane ? parentLane.lane_id : null, name });
+      mutate('add-lane', { parentLaneId: parentLane ? parentLane.lane_id : null, name, ...(parentLane ? {} : landing()) });
     });
     return form;
   }
@@ -612,7 +612,7 @@ export function open(ctx, config, view) {
       const startX = e.clientX;
       const startW = tile.offsetWidth;
       let w = startW;
-      const move = ev => { w = Math.max(180, Math.round(startW + ev.clientX - startX)); tile.style.width = `${w}px`; };
+      const move = ev => { w = Math.min(LANE_MAX_W, Math.max(LANE_MIN_W, Math.round(startW + ev.clientX - startX))); tile.style.width = `${w}px`; };
       const up = () => {
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', up);
@@ -622,6 +622,14 @@ export function open(ctx, config, view) {
       window.addEventListener('pointerup', up);
     });
     return edge;
+  }
+
+  // A new top-level lane lands in view: the scrolled corner plus the gap,
+  // nudged right past the boxes already there.
+  function landing() {
+    const boxes = [...canvas.querySelectorAll(':scope > .board-lane')]
+      .map(t => ({ x: t.offsetLeft, y: t.offsetTop, w: t.offsetWidth, h: t.offsetHeight }));
+    return landingSpot(boxes, { x: canvas.scrollLeft + LANE_GAP, y: canvas.scrollTop + LANE_GAP });
   }
 
   // The scroll offset of each surface outlives drilling in and back (ADR-014).

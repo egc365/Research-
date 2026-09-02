@@ -295,7 +295,7 @@ test('whiteboard rows carry position and slug; a sketch from before the canvas i
   const hello = await access.call('add-lane', { name: 'hello', x: 24, y: 80, w: 300 });
   assert.deepEqual([hello.slug, hello.x, hello.y, hello.w], ['hello', 24, 80, 300]);
   const inside = await access.call('move-lane', { laneId: hello.lane_id, parentLaneId: 1 });
-  assert.deepEqual([inside.parent_lane_id, inside.x, inside.y, inside.w], [1, null, null, null]);
+  assert.deepEqual([inside.parent_lane_id, inside.x, inside.y, inside.w], [1, null, null, 300], 'w rides along through nesting');
   const out = await access.call('move-lane', { laneId: hello.lane_id, parentLaneId: null, x: 24, y: 420 });
   assert.deepEqual([out.parent_lane_id, out.x, out.y, out.sort_order], [null, 24, 420, 120]);
   assert.equal((await access.call('set-width', { laneId: hello.lane_id, w: 560 })).w, 560);

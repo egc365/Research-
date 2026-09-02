@@ -3,9 +3,9 @@
 // localStorage, keyed by workspace root. Save to project is the only crossing.
 import {
   fail, needName, needLaneName, refuseDuplicateLane, idOrNull, relPath, childRel,
-  parseColor, parseOrientation, parseFace, parseIcon, parseFields, parseWidth, parseCoord, defaultIcon, viewCard,
+  parseColor, parseOrientation, parseFace, parseIcon, parseFields, parseWidth, parseLaneWidth, parseCoord, defaultIcon, viewCard,
   nextOrder, laneDepth, subtreeHeight, assertDepth, assertNoCycle, imageDataUrl, imageFileName, nestTree,
-  laneSlug, nextSpot, settleLanes
+  laneSlug, landingSpot, settleLanes
 } from './board-rules.js';
 
 function storageKey(rootPath) {
@@ -108,8 +108,9 @@ function apply(state, action, payload) {
     const name = refuseDuplicateLane(needLaneName(payload.name), siblings);
     const x = parseCoord(payload.x, 'x');
     const y = parseCoord(payload.y, 'y');
-    const spot = parentLaneId != null ? { x: null, y: null, w: null }
-      : x == null || y == null ? { ...nextSpot(topLanes(state, surface)), w: parseWidth(payload.w) } : { x, y, w: parseWidth(payload.w) };
+    const w = parseLaneWidth(payload.w);
+    const spot = parentLaneId != null ? { x: null, y: null, w }
+      : x == null || y == null ? { ...landingSpot(topLanes(state, surface)), w } : { x, y, w };
     const row = {
       lane_id: state.nextLane++,
       surface,
@@ -187,7 +188,7 @@ function apply(state, action, payload) {
   if (action === 'set-width') {
     const lane = mustLane(state, Number(payload.laneId));
     if (lane.parent_lane_id != null) throw fail('BOARD_BAD_INPUT', 'Only a top-level lane has a width; a nested lane flows in its parent');
-    lane.w = parseWidth(payload.w);
+    lane.w = parseLaneWidth(payload.w);
     return lane;
   }
 
@@ -238,12 +239,12 @@ function apply(state, action, payload) {
     return viewCard(card);
   }
 
-  // The server's rule: into a parent drops the position, onto the canvas
-  // sits at x, y (the payload's, else its own, else the next spot).
+  // The server's rule: into a parent drops the position and keeps w; onto
+  // the canvas sits at x, y (the payload's, else its own, else the landing spot).
   if (action === 'move-lane') {
     const lane = mustLane(state, Number(payload.laneId));
     const toParentId = idOrNull(payload.parentLaneId);
-    let spot = { x: null, y: null, w: null };
+    let spot = { x: null, y: null, w: lane.w };
     if (toParentId != null) {
       laneOn(state, toParentId, lane.surface);
       assertNoCycle(lane.lane_id, toParentId, parentOf(state));
@@ -253,7 +254,7 @@ function apply(state, action, payload) {
       const y = parseCoord(payload.y, 'y');
       spot = x != null && y != null ? { x, y, w: lane.w }
         : lane.x != null ? { x: lane.x, y: lane.y, w: lane.w }
-          : { ...nextSpot(topLanes(state, lane.surface, lane.lane_id)), w: lane.w };
+          : { ...landingSpot(topLanes(state, lane.surface, lane.lane_id)), w: lane.w };
     }
     refuseDuplicateLane(lane.name, state.lanes.filter(l => l !== lane && l.surface === lane.surface && l.parent_lane_id === toParentId));
     const sortOrder = payload.sortOrder != null ? Number(payload.sortOrder)
