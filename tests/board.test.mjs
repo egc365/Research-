@@ -323,6 +323,30 @@ test('remove drops the board row and leaves the disk alone', async t => {
   assert.deepEqual(groups, []);
 });
 
+test('re-creating a group by name adopts the folder left on disk', async t => {
+  const ws = workspace(t);
+  const parent = await act(ws, 'add-group', { title: 'plans' });
+  const q3 = await act(ws, 'add-group', { parentId: parent.group_id, title: 'q3' });
+  await act(ws, 'add-card', { kind: 'file', groupId: q3.group_id, name: 'notes.md', body: 'stay' });
+  const folder = path.join(ws.root, 'plans', 'q3');
+  const notes = path.join(folder, 'notes.md');
+  const beforeTree = fs.readdirSync(folder).sort();
+  const beforeBody = fs.readFileSync(notes, 'utf8');
+  const beforeMtime = fs.statSync(notes).mtimeMs;
+  await act(ws, 'remove', { groupId: q3.group_id });
+  assert.equal(fs.statSync(folder).isDirectory(), true);
+  assert.equal(fs.readFileSync(notes, 'utf8'), 'stay\n');
+  const again = await act(ws, 'add-group', { parentId: parent.group_id, title: 'q3' });
+  assert.equal(again.folder_path, 'plans/q3');
+  assert.equal(again.title, 'q3');
+  assert.equal(fs.readFileSync(notes, 'utf8'), beforeBody);
+  assert.equal(fs.statSync(notes).mtimeMs, beforeMtime);
+  assert.deepEqual(fs.readdirSync(folder).sort(), beforeTree);
+  const { groups } = await act(ws, 'tree');
+  assert.equal(groups[0].groups[0].folder_path, 'plans/q3');
+  assert.equal(groups[0].groups[0].cards.length, 0);
+});
+
 test('unbound group from before folder_path still renders and bind-group writes the folder', async t => {
   const ws = workspace(t);
   const { DatabaseSync } = await import('node:sqlite');

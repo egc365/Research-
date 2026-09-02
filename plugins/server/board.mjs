@@ -118,6 +118,20 @@ function parentFolder(db, parentId) {
   return parent;
 }
 
+// A group is a folder. Missing: mkdir. Already there: bind to it. A file
+// at that path is not a group and is refused. createDirectory still throws
+// if the path exists, so the exist-and-adopt check sits in front of it.
+function ensureFolder(store, rootPath, folder_path) {
+  const target = absIn(rootPath, folder_path);
+  mustStore(store).assertInsideWorkspace(rootPath, target);
+  if (!fs.existsSync(target)) {
+    store.createDirectory({ rootPath, dirPath: target, actor: 'human' });
+  } else if (!fs.statSync(target).isDirectory()) {
+    throw fail('BOARD_BAD_INPUT', `Not a folder: ${folder_path}`);
+  }
+  return target;
+}
+
 function createBoundGroup(db, { store, rootPath, parentId, title, orientation, now }) {
   if (parentId != null) {
     mustGroup(db, parentId);
@@ -128,8 +142,7 @@ function createBoundGroup(db, { store, rootPath, parentId, title, orientation, n
   if (!['horizontal', 'vertical'].includes(orientation)) throw fail('BOARD_BAD_INPUT', `Unknown orientation: ${orientation}`);
   const parent = parentFolder(db, parentId);
   const folder_path = childRel(parent.folder_path, title);
-  const target = absIn(rootPath, folder_path);
-  mustStore(store).createDirectory({ rootPath, dirPath: target, actor: 'human' });
+  ensureFolder(store, rootPath, folder_path);
   const sortOrder = nextOrder(db, 'board_groups', parentId == null ? 'parent_id IS NULL AND ?=1' : 'parent_id=?', parentId == null ? 1 : parentId);
   const { lastInsertRowid } = db.prepare(
     'INSERT INTO board_groups (parent_id, title, orientation, sort_order, folder_path, created_at) VALUES (?,?,?,?,?,?)'
@@ -244,13 +257,7 @@ export const plugin = {
         throw fail('BOARD_UNBOUND', `Bind group ${group.parent_id} to a folder first`);
       }
       const folder_path = childRel(parent.folder_path, group.title);
-      const target = absIn(rootPath, folder_path);
-      mustStore(store).assertInsideWorkspace(rootPath, target);
-      if (!fs.existsSync(target)) {
-        store.createDirectory({ rootPath, dirPath: target, actor: 'human' });
-      } else if (!fs.statSync(target).isDirectory()) {
-        throw fail('BOARD_BAD_INPUT', `Not a folder: ${folder_path}`);
-      }
+      ensureFolder(store, rootPath, folder_path);
       db.prepare('UPDATE board_groups SET folder_path=? WHERE group_id=?').run(folder_path, group.group_id);
       return mustGroup(db, group.group_id);
     }
