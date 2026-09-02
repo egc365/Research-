@@ -853,7 +853,9 @@ function mountPaneResizer(slotEls) {
   };
 }
 
-async function activateStation(stationId) {
+// `path` opens the station on that board surface (Save to project lands on
+// its new folder); without it the surface is whatever the kernel holds.
+async function activateStation(stationId, { path } = {}) {
   if (navigationBlocked()) return;
   // Guard before tearing anything down: a target station that is not enabled
   // for this workspace must not blank the current view ("Open in X" buttons).
@@ -866,6 +868,7 @@ async function activateStation(stationId) {
   const previous = kernel.activeStation;
   disposeMounts();
   kernel.activeStation = stationId;
+  if (Array.isArray(path)) kernel.boardPath = path.map(String);
   if (kernel.workspace) uiMemory.patch(s => { (s.station ??= {})[kernel.workspace.root_path] = stationId; });
   renderStationBar();
   const layout = station.manifest.layout || 'main';

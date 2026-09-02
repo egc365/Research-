@@ -126,6 +126,7 @@ export function mount(el, ctx) {
     if (card.kind === 'image') return card.title || '';
     if (card.kind === 'folder') return faceTitle(card);
     if (card.kind === 'file') {
+      if (isWhiteboard) return card.text || '';
       const key = stickyKey(root(), card.ref);
       return stickies.notes?.[key]?.text || '';
     }
@@ -234,7 +235,7 @@ export function mount(el, ctx) {
     await mutate('move-lane', { laneId: moved, toParentLaneId: targetLane ? targetLane.lane_id : null, sortOrder: top + 10 });
   }
 
-  function treeDrop(e) {
+  function cardPayload(e) {
     const raw = e.dataTransfer?.getData(CARD_MIME);
     if (!raw) return null;
     try { return JSON.parse(raw); } catch { return null; }
@@ -255,7 +256,7 @@ export function mount(el, ctx) {
     if (isWhiteboard && e.dataTransfer.files?.length) { ingestFiles(e.dataTransfer.files, holderId(holder)); return; }
     if (dragLaneId != null) { dropLane(holder); return; }
     if (dragCardId != null) { dropCard(holder, beforeCard); return; }
-    const payload = treeDrop(e);
+    const payload = cardPayload(e);
     if (payload) dropTreeFile(payload, holder);
   }
 
@@ -301,6 +302,14 @@ export function mount(el, ctx) {
     b.textContent = glyph; b.title = title; b.onclick = onclick;
     return b;
   };
+
+  // Titles name where the thing lives: the whiteboard has no disk to mention.
+  function removeTitle(what) {
+    if (isWhiteboard) return `Remove the ${what} from the whiteboard.`;
+    if (what === 'lane') return 'Remove the lane and its cards from the board. Files and folders stay on disk.';
+    if (what === 'card') return 'Remove card';
+    return `Remove from the board. The ${what} stays on disk.`;
+  }
 
   function removeBtn(kind, id, idleTitle) {
     const armed = pendingRemove && pendingRemove.kind === kind && pendingRemove.id === id;
@@ -348,6 +357,13 @@ export function mount(el, ctx) {
       return;
     }
     if (card.kind === 'file') {
+      // On the Board the text is the file's sticky note; on the whiteboard it
+      // stays on the memory row and no service is called (ADR-023).
+      if (isWhiteboard) {
+        patch.text = text;
+        call('update-card', patch).then(repaint).catch(error => { ctx.notify(error.message, 'error'); repaint(); });
+        return;
+      }
       const writes = [];
       if (colorPick !== undefined) writes.push(call('update-card', patch));
       const key = stickyKey(root(), card.ref);
@@ -571,9 +587,7 @@ export function mount(el, ctx) {
         }
         mutate('update-card', { cardId: card.card_id, color });
       }));
-      const idle = card.kind === 'folder' ? 'Remove from the board. The folder stays on disk.'
-        : card.kind === 'file' ? 'Remove from the board. The file stays on disk.' : 'Remove card';
-      palWrap.appendChild(removeBtn('card', card.card_id, idle));
+      palWrap.appendChild(removeBtn('card', card.card_id, removeTitle(card.kind === 'folder' || card.kind === 'file' ? card.kind : 'card')));
     };
     mountPalette();
     return palWrap;
@@ -604,8 +618,7 @@ export function mount(el, ctx) {
       const up = ev => {
         document.removeEventListener('mousemove', move);
         document.removeEventListener('mouseup', up);
-        const next = Math.max(80, Math.round(startW + ev.clientX - startX));
-        if (isWhiteboard) persistAppearance(card, { width: next });
+        persistAppearance(card, { width: Math.max(80, Math.round(startW + ev.clientX - startX)) });
       };
       document.addEventListener('mousemove', move);
       document.addEventListener('mouseup', up);
@@ -684,7 +697,7 @@ export function mount(el, ctx) {
     c.addEventListener('dragend', () => { dragCardId = null; dragLaneId = null; });
     acceptDrag(c);
     c.addEventListener('drop', e => {
-      if (card.kind === 'folder' && (dragCardId != null || treeDrop(e))) {
+      if (card.kind === 'folder' && (dragCardId != null || cardPayload(e))) {
         e.preventDefault(); e.stopPropagation();
         dragCardId = null;
         ctx.notify(`Folders are opened, not dropped into. Open ${faceTitle(card)} to arrange inside it.`, 'error');
@@ -902,7 +915,7 @@ export function mount(el, ctx) {
       e.stopPropagation();
       mutate('set-orientation', { laneId: lane.lane_id, orientation: lane.orientation === 'vertical' ? 'horizontal' : 'vertical' });
     }));
-    h.appendChild(removeBtn('lane', lane.lane_id, 'Remove the lane and its cards from the board. Files and folders stay on disk.'));
+    h.appendChild(removeBtn('lane', lane.lane_id, removeTitle('lane')));
     return h;
   }
 
@@ -959,7 +972,7 @@ export function mount(el, ctx) {
     bar.appendChild(btn('＋ file', `Create a file under ${surface || 'the workspace root'}`, () => openAdd(null, 'file')));
     bar.appendChild(btn('＋ folder', `Create a folder under ${surface || 'the workspace root'}`, () => openAdd(null, 'folder')));
     if (isWhiteboard) {
-      const save = btn('Save to project', 'Write this sketch as files under a folder, then open it as a Board', () => openSaveDialog());
+      const save = btn('Save to project', 'Create a project folder holding this sketch as files, then open it as a Board', () => openSaveDialog());
       save.className = 'primary';
       bar.appendChild(save);
     }
@@ -982,7 +995,7 @@ export function mount(el, ctx) {
     const body = document.createElement('div');
     body.className = 'pm-body';
     const destLab = document.createElement('label');
-    destLab.textContent = 'Destination folder';
+    destLab.textContent = 'Parent folder';
     const destInput = document.createElement('input');
     destInput.type = 'text';
     destInput.placeholder = 'projects';
@@ -1002,13 +1015,20 @@ export function mount(el, ctx) {
     go.textContent = 'Save to project';
     const status = document.createElement('div');
     status.className = 'muted';
-    body.append(destLab, treeHost, nameLab, go, status);
+    const hint = document.createElement('div');
+    hint.className = 'muted';
+    const showHint = () => { hint.textContent = `Creates ${[destInput.value.trim(), nameInput.value.trim() || 'the project name'].filter(Boolean).join('/')} and opens the Board there.`; };
+    destInput.oninput = showHint;
+    nameInput.oninput = showHint;
+    showHint();
+    body.append(destLab, treeHost, nameLab, hint, go, status);
     dlg.append(head, body);
     el.appendChild(dlg);
     dlg.showModal();
 
     function pick(rel) {
       destInput.value = rel === '.' ? '' : rel;
+      showHint();
     }
 
     async function fillTree(relativePath, container, depth) {
@@ -1052,15 +1072,15 @@ export function mount(el, ctx) {
     fillTree('.', treeHost, 1);
 
     go.onclick = async () => {
-      const destination = destInput.value.trim();
+      const parent = destInput.value.trim();
       const name = nameInput.value.trim();
       if (!name) { status.textContent = 'A project name is required.'; return; }
       go.disabled = true;
       try {
-        await call('save-to-project', { destination: destination === '.' ? '' : destination, name });
+        const saved = await call('save-to-project', { parent: parent === '.' ? '' : parent, name });
         dlg.close();
-        ctx.notify(`Saved ${name} to ${destination || 'workspace root'}.`, 'ok');
-        ctx.activateStation('dashboard-viewer');
+        ctx.notify(`Saved ${saved.destination}.`, 'ok');
+        ctx.activateStation('dashboard-viewer', { path: saved.destination.split('/').filter(Boolean) });
       } catch (error) {
         status.textContent = error.message;
         go.disabled = false;

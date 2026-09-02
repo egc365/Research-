@@ -6,7 +6,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { plugin, STICKY_COLORS } from '../plugins/server/stickies.mjs';
+import { plugin } from '../plugins/server/stickies.mjs';
+import { STICKY_COLORS } from '../public/contrib/lib/sticky.js';
 import { stickyKey } from '../public/contrib/lib/sticky.js';
 
 function workspace(t) {

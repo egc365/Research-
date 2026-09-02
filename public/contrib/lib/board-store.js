@@ -2,7 +2,7 @@
 // board service. Whiteboard mode keeps the same rows in memory and
 // localStorage, keyed by workspace root. Save to project is the only crossing.
 import {
-  fail, needName, needLaneName, idOrNull, relPath, childRel,
+  fail, needName, needLaneName, refuseDuplicateLane, idOrNull, relPath, childRel,
   parseColor, parseOrientation, parseFace, parseIcon, parseFields, parseWidth, defaultFace, defaultIcon, viewCard,
   nextOrder, laneDepth, subtreeHeight, assertDepth, assertNoCycle, imageDataUrl, imageFileName, nestTree
 } from './board-rules.js';
@@ -100,11 +100,12 @@ function apply(state, action, payload) {
       laneOn(state, parentLaneId, surface);
       assertDepth(laneDepth(parentLaneId, parentOf(state)) + 1);
     }
+    const siblings = state.lanes.filter(l => l.surface === surface && l.parent_lane_id === parentLaneId);
     const row = {
       lane_id: state.nextLane++,
       surface,
       parent_lane_id: parentLaneId,
-      name: needLaneName(payload.name),
+      name: refuseDuplicateLane(needLaneName(payload.name), siblings),
       orientation: payload.orientation == null ? 'vertical' : parseOrientation(payload.orientation),
       sort_order: nextOrder(topOrder(state.lanes, l => l.surface === surface && l.parent_lane_id === parentLaneId)),
       created_at: now()
@@ -159,7 +160,8 @@ function apply(state, action, payload) {
 
   if (action === 'rename') {
     const lane = mustLane(state, Number(payload.laneId));
-    lane.name = needLaneName(payload.name);
+    const siblings = state.lanes.filter(l => l !== lane && l.surface === lane.surface && l.parent_lane_id === lane.parent_lane_id);
+    lane.name = refuseDuplicateLane(needLaneName(payload.name), siblings);
     return lane;
   }
 
@@ -176,9 +178,13 @@ function apply(state, action, payload) {
       const t = String(payload.name).trim();
       if (t) card.title = t;
     }
+    // The sticky face's text. A note is its text, a link shows it as the
+    // title, and a file card keeps it on the row (ADR-023: the whiteboard
+    // never calls the stickies service); an emptied text clears it.
     if (payload.text !== undefined && payload.text !== null) {
       const t = String(payload.text).trim();
-      if (t) {
+      if (card.kind === 'file') card.text = t;
+      else if (t) {
         if (card.kind === 'note') {
           card.ref = t;
           if (payload.name === undefined) card.title = t;
@@ -216,6 +222,7 @@ function apply(state, action, payload) {
       assertNoCycle(lane.lane_id, toParentId, parentOf(state));
       assertDepth(laneDepth(toParentId, parentOf(state)) + subtreeHeight(lane.lane_id, childrenOf(state)));
     }
+    refuseDuplicateLane(lane.name, state.lanes.filter(l => l !== lane && l.surface === lane.surface && l.parent_lane_id === toParentId));
     lane.parent_lane_id = toParentId;
     lane.sort_order = sortOrder;
     return lane;
@@ -276,7 +283,7 @@ function memoryStore(ctx) {
         return Promise.resolve()
           .then(() => ctx.action('board', 'save-to-project', {
             rootPath: root,
-            destination: payload.destination,
+            parent: payload.parent,
             name: payload.name,
             model: { lanes: state.lanes, cards: state.cards }
           }))

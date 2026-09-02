@@ -1,6 +1,7 @@
 // Sticky-note rendering, shared by the board and the folder cards. The
-// palette mirrors plugins/server/stickies.mjs (the server refuses anything
-// off it), so a note can never render in an unreadable color.
+// palette is defined here and imported by plugins/server/stickies.mjs (the
+// server refuses anything off it), so a note can never render in an
+// unreadable color. Classic office colors.
 export const STICKY_COLORS = ['#f6e58d', '#ffb8b8', '#badc58', '#7ed6df', '#e6a8f7', '#ffbe76'];
 export const DEFAULT_COLOR = STICKY_COLORS[0];
 

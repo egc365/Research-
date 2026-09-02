@@ -9,7 +9,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { plugin } from '../plugins/server/board.mjs';
-import { STICKY_COLORS } from '../plugins/server/stickies.mjs';
+import { STICKY_COLORS } from '../public/contrib/lib/board-rules.js';
 import { ControlStore } from '../src/store.mjs';
 
 function workspace(t) {
@@ -168,6 +168,40 @@ test('move-card between lanes and to the floor, on one surface only', async t =>
     act(ws, 'move-card', { cardId: card.card_id, toLaneId: elsewhere.lane_id, sortOrder: 10 }),
     e => e.code === 'BOARD_BAD_INPUT' && /surface/.test(e.message)
   );
+});
+
+test('a file dropped twice on one surface is refused, naming where it sits', async t => {
+  const ws = workspace(t);
+  await act(ws, 'add-card', { kind: 'file', name: 'README.md' });
+  const lane = await act(ws, 'add-lane', { name: 'task 1' });
+  await act(ws, 'add-card', { laneId: lane.lane_id, kind: 'file', name: 'plan.md' });
+  await assert.rejects(act(ws, 'add-card', { kind: 'file', ref: 'README.md' }),
+    e => e.code === 'BOARD_DUPLICATE' && e.message === 'README.md is already on this surface, on the floor');
+  await assert.rejects(act(ws, 'add-card', { laneId: lane.lane_id, kind: 'file', ref: 'plan.md' }),
+    e => e.code === 'BOARD_DUPLICATE' && e.message === 'plan.md is already on this surface, in lane task 1');
+  const { lanes, cards } = await act(ws, 'tree');
+  assert.deepEqual([cards.length, lanes[0].cards.length], [1, 1]);
+});
+
+test('width persists on the Board through update-card and a board from before the column gets it', async t => {
+  const ws = workspace(t);
+  fs.mkdirSync(path.join(ws.root, '.research-ops'));
+  const old = new DatabaseSync(path.join(ws.root, '.research-ops', 'board.sqlite3'));
+  old.exec(`CREATE TABLE board_lanes (lane_id INTEGER PRIMARY KEY, surface TEXT NOT NULL DEFAULT '', parent_lane_id INTEGER NULL, name TEXT NOT NULL,
+    orientation TEXT NOT NULL DEFAULT 'vertical', sort_order INTEGER NOT NULL DEFAULT 100, created_at TEXT NOT NULL);
+    CREATE TABLE board_cards (card_id INTEGER PRIMARY KEY, surface TEXT NOT NULL DEFAULT '', lane_id INTEGER NULL, kind TEXT NOT NULL, ref TEXT NOT NULL,
+    title TEXT, color TEXT, face TEXT, icon TEXT, fields_json TEXT, sort_order INTEGER NOT NULL DEFAULT 100, created_at TEXT NOT NULL);
+    INSERT INTO board_cards (surface, lane_id, kind, ref, created_at) VALUES ('', NULL, 'note', 'old row', '2026-01-01');`);
+  old.close();
+  const before = await act(ws, 'tree');
+  assert.deepEqual(before.cards.map(c => [c.ref, c.width]), [['old row', null]]);
+  fs.writeFileSync(path.join(ws.root, 'pic.png'), 'x');
+  const pic = await act(ws, 'add-card', { kind: 'file', ref: 'pic.png' });
+  assert.equal(pic.width, null);
+  assert.equal((await act(ws, 'update-card', { cardId: pic.card_id, width: 240 })).width, 240);
+  assert.equal((await act(ws, 'tree')).cards.find(c => c.card_id === pic.card_id).width, 240);
+  assert.equal((await act(ws, 'update-card', { cardId: pic.card_id, width: null })).width, null);
+  await assert.rejects(act(ws, 'update-card', { cardId: pic.card_id, width: 'wide' }), e => e.code === 'BOARD_BAD_INPUT');
 });
 
 test('tree drop: an existing file under the surface becomes a card, one outside is refused', async t => {
@@ -421,7 +455,7 @@ test('agent surface may read the tree but never mutate', async t => {
     ['move-card', { cardId: card.card_id, toLaneId: null, sortOrder: 5 }],
     ['move-lane', { laneId: a.lane_id, toParentLaneId: null, sortOrder: 5 }],
     ['remove', { cardId: card.card_id }],
-    ['save-to-project', { destination: 'projects', name: 'nope', model: { lanes: [], cards: [] } }]
+    ['save-to-project', { parent: 'projects', name: 'nope', model: { lanes: [], cards: [] } }]
   ];
   for (const [action, payload] of mutations) {
     await assert.rejects(act(ws, action, payload, 'agent'), error => error.code === 'OWNER_SURFACE_ONLY');

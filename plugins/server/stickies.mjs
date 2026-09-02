@@ -6,14 +6,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+// The palette is defined once, in the client's sticky lib; the server accepts
+// any of its colors (or null = default) and nothing else.
+import { STICKY_COLORS, DEFAULT_COLOR } from '../../public/contrib/lib/sticky.js';
 
 const handles = new Map();
-
-// The sticky palette: classic office colors. The client offers exactly these;
-// the server accepts any of them (or null = default) and nothing else, so a
-// note never renders in an unreadable color.
-export const STICKY_COLORS = ['#f6e58d', '#ffb8b8', '#badc58', '#7ed6df', '#e6a8f7', '#ffbe76'];
-const DEFAULT_COLOR = STICKY_COLORS[0];
 
 function stickyDb(rootPath) {
   const root = path.resolve(String(rootPath || ''));

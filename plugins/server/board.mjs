@@ -10,9 +10,10 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
   fail, needName, needLaneName, idOrNull, relPath, childRel,
-  parseColor, parseOrientation, parseFace, parseIcon, parseFields, defaultFace, defaultIcon, viewCard,
+  parseColor, parseOrientation, parseFace, parseIcon, parseFields, parseWidth, defaultFace, defaultIcon, viewCard,
   nextOrder, laneDepth, subtreeHeight, assertDepth, assertNoCycle, imageDataUrl, imageFileName, nestTree
 } from '../../public/contrib/lib/board-rules.js';
+import { plugin as stickies } from './stickies.mjs';
 
 const handles = new Map();
 
@@ -37,6 +38,7 @@ const SCHEMA = `
     face TEXT,
     icon TEXT,
     fields_json TEXT,
+    width INTEGER,
     sort_order INTEGER NOT NULL DEFAULT 100,
     created_at TEXT NOT NULL
   );
@@ -49,7 +51,18 @@ const SCHEMA = `
 function migrateGroups(db) {
   const groups = db.prepare('SELECT * FROM board_groups ORDER BY sort_order, group_id').all();
   const cards = db.prepare('SELECT * FROM board_cards ORDER BY sort_order, card_id').all();
-  db.exec(`BEGIN; DROP TABLE board_cards; DROP TABLE board_groups; ${SCHEMA}`);
+  db.exec('BEGIN');
+  try {
+    migrateRows(db, groups, cards);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function migrateRows(db, groups, cards) {
+  db.exec(`DROP TABLE board_cards; DROP TABLE board_groups; ${SCHEMA}`);
   const insLane = db.prepare('INSERT INTO board_lanes (surface, parent_lane_id, name, orientation, sort_order, created_at) VALUES (?,?,?,?,?,?)');
   const insCard = db.prepare('INSERT INTO board_cards (surface, lane_id, kind, ref, title, color, face, icon, fields_json, sort_order, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
   const byId = new Map(groups.map(g => [g.group_id, g]));
@@ -82,7 +95,12 @@ function migrateGroups(db) {
     insCard.run(lane ? lane.surface : '', lane ? lane.lane_id : null, c.kind, c.ref, c.title ?? null, c.color ?? null,
       c.face ?? null, c.icon ?? null, c.fields_json ?? null, c.sort_order ?? 100, c.created_at || new Date().toISOString());
   }
-  db.exec('COMMIT');
+}
+
+// Boards from before the width column get it on open.
+function addWidthColumn(db) {
+  const cols = db.prepare('PRAGMA table_info(board_cards)').all().map(c => c.name);
+  if (!cols.includes('width')) db.exec('ALTER TABLE board_cards ADD COLUMN width INTEGER');
 }
 
 function boardDb(rootPath) {
@@ -97,7 +115,7 @@ function boardDb(rootPath) {
   db.exec('PRAGMA foreign_keys=OFF');
   const legacy = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='board_groups'").get();
   if (legacy) migrateGroups(db);
-  else db.exec(SCHEMA);
+  else { db.exec(SCHEMA); addWidthColumn(db); }
   db.exec('PRAGMA foreign_keys=ON');
   handles.set(root, db);
   return db;
@@ -176,11 +194,11 @@ function insertLane(db, { surface, parentLaneId, name, orientation, now }) {
   return mustLane(db, Number(lastInsertRowid));
 }
 
-function insertCard(db, { surface, laneId, kind, ref, title, color, face, icon, fields_json, now }) {
+function insertCard(db, { surface, laneId, kind, ref, title, color, face, icon, fields_json, width = null, now }) {
   const sortOrder = nextCardOrder(db, surface, laneId);
   const { lastInsertRowid } = db.prepare(
-    'INSERT INTO board_cards (surface, lane_id, kind, ref, title, color, face, icon, fields_json, sort_order, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
-  ).run(surface, laneId, kind, ref, title, color, face, icon, fields_json, sortOrder, now());
+    'INSERT INTO board_cards (surface, lane_id, kind, ref, title, color, face, icon, fields_json, width, sort_order, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)'
+  ).run(surface, laneId, kind, ref, title, color, face, icon, fields_json, width, sortOrder, now());
   return mustCard(db, Number(lastInsertRowid));
 }
 
@@ -293,6 +311,7 @@ async function saveSketch(db, ctx, dest, model) {
     let ref;
     let iconKind = 'file';
     let rowKind = 'file';
+    let width = null;
     if (kind === 'folder') {
       const name = needName(baseName(card.ref) || card.title);
       ref = childRel(surface, name);
@@ -308,6 +327,7 @@ async function saveSketch(db, ctx, dest, model) {
         name = uniqueName(used(surface), imageFileName(card.title, image.mime));
         content = Buffer.from(image.base64, 'base64');
         iconKind = 'image';
+        width = parseWidth(card.width);
         if (title == null) title = name;
       } else if (kind === 'file') {
         name = uniqueName(used(surface), needName(baseName(card.ref) || card.title || 'file.md'));
@@ -327,12 +347,17 @@ async function saveSketch(db, ctx, dest, model) {
       }
       ref = await writeNewFile({ ...ctx, rel: childRel(surface, name), content });
       if (title == null) title = name;
+      // The sticky text typed on the sketch becomes the file's sticky note.
+      const text = String(card.text || '').trim();
+      if (kind === 'file' && text) {
+        await stickies.action({ action: 'set', payload: { rootPath: ctx.rootPath, path: ref, text, color }, surface: 'owner' });
+      }
     }
     insertCard(db, {
       surface, laneId, kind: rowKind, ref, title, color,
       face: parseFace(card.face, defaultFace(rowKind)),
       icon: parseIcon(card.icon, defaultIcon(iconKind)),
-      fields_json, now: ctx.now
+      fields_json, width, now: ctx.now
     });
   }
 
@@ -410,6 +435,11 @@ export const plugin = {
         const abs = absIn(rootPath, ref);
         mustStore(store).assertInsideWorkspace(rootPath, abs);
         if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) throw fail('BOARD_NOT_FOUND', `No such file: ${ref}`);
+        const carded = db.prepare('SELECT lane_id FROM board_cards WHERE surface=? AND kind=? AND ref=?').get(surface, 'file', ref);
+        if (carded) {
+          const where = carded.lane_id == null ? 'on the floor' : `in lane ${mustLane(db, carded.lane_id).name}`;
+          throw fail('BOARD_DUPLICATE', `${ref} is already on this surface, ${where}`);
+        }
       } else if (kind === 'file') {
         const name = needName(payload.name);
         const body = payload.body == null ? '' : String(payload.body);
@@ -463,8 +493,9 @@ export const plugin = {
       const face = parseFace(payload.face, card.face);
       const icon = parseIcon(payload.icon, card.icon);
       const fields_json = parseFields(payload, card.fields_json);
-      db.prepare('UPDATE board_cards SET color=?, title=?, ref=?, face=?, icon=?, fields_json=? WHERE card_id=?')
-        .run(color, title, ref, face, icon, fields_json, card.card_id);
+      const width = payload.width === undefined ? card.width : parseWidth(payload.width);
+      db.prepare('UPDATE board_cards SET color=?, title=?, ref=?, face=?, icon=?, fields_json=?, width=? WHERE card_id=?')
+        .run(color, title, ref, face, icon, fields_json, width, card.card_id);
       return mustCard(db, card.card_id);
     }
 
@@ -509,18 +540,13 @@ export const plugin = {
       return { removed: 'lane', laneId: lane.lane_id, cards: 'floor' };
     }
 
+    // Save creates <parent>/<name> for the sketch and refuses a folder that exists.
     if (action === 'save-to-project') {
-      const dest = relPath(payload.destination, 'A destination');
-      const name = needLaneName(payload.name);
-      const target = dest ? absIn(rootPath, dest) : path.resolve(rootPath);
+      const dest = joinRel(relPath(payload.parent, 'A parent folder'), needName(payload.name));
+      const target = absIn(rootPath, dest);
       mustStore(store).assertInsideWorkspace(rootPath, target);
-      if (fs.existsSync(target)) {
-        if (!fs.statSync(target).isDirectory()) throw fail('BOARD_BAD_INPUT', `Not a folder: ${dest || '.'}`);
-        const entries = store.listDirectory(rootPath, dest || '.');
-        if (entries.length) throw fail('BOARD_NONEMPTY', 'Destination is not empty');
-      } else {
-        store.createDirectory({ rootPath, dirPath: target, actor: 'human' });
-      }
+      if (fs.existsSync(target)) throw fail('BOARD_EXISTS', `${dest} exists`);
+      store.createDirectory({ rootPath, dirPath: target, actor: 'human' });
       await saveSketch(db, { store, plugins, rootPath, now }, dest, payload.model);
       return { destination: dest, ...tree(db, dest) };
     }
