@@ -9,9 +9,16 @@ export function mount(el, ctx) {
   let crumb = [];      // [{group_id, title}] from root down to the open group
   let data = { groups: [] };
   let dragCardId = null;
+  let dragGroupId = null;
 
   const root = () => ctx.workspace?.root_path;
   const call = (action, payload = {}) => ctx.action('board', action, { rootPath: root(), ...payload });
+  // File cards store workspace-relative refs; a selection path that carries
+  // the workspace root is trimmed down to one.
+  const relative = p => {
+    const r = root();
+    return r && p.startsWith(r + '/') ? p.slice(r.length + 1) : p;
+  };
   const mutate = (action, payload) => call(action, payload)
     .then(repaint)
     .catch(error => { ctx.notify(error.message, 'error'); repaint(); });
@@ -62,8 +69,21 @@ export function mount(el, ctx) {
     repaint();
   }
 
+  // A group tile drags like a card; dropping it on another group nests it
+  // there, dropping it on the board floor makes it top-level. The server
+  // enforces cycles and the 3-deep cap — a refusal surfaces as a notify.
+  async function dropGroup(targetGroup) {
+    if (dragGroupId == null) return;
+    if (targetGroup && targetGroup.group_id === dragGroupId) { dragGroupId = null; return; }
+    const siblings = targetGroup ? targetGroup.groups : data.groups;
+    const top = siblings.reduce((max, g) => Math.max(max, g.sort_order), 0);
+    const moved = dragGroupId;
+    dragGroupId = null;
+    await mutate('move', { groupId: moved, toParentId: targetGroup ? targetGroup.group_id : null, sortOrder: top + 10 });
+  }
+
   const acceptDrag = node => {
-    node.addEventListener('dragover', e => { if (dragCardId != null) e.preventDefault(); });
+    node.addEventListener('dragover', e => { if (dragCardId != null || dragGroupId != null) e.preventDefault(); });
   };
 
   // ---- rendering (DOM API + textContent, so titles/refs need no escaping) --
@@ -83,13 +103,18 @@ export function mount(el, ctx) {
   function cardEl(card, group) {
     const c = div('border:1px solid #3a3a3a;border-radius:6px;padding:6px 8px;margin:4px;background:#26262b;cursor:grab;font-size:13px');
     c.draggable = true;
-    c.addEventListener('dragstart', () => { dragCardId = card.card_id; });
+    c.addEventListener('dragstart', e => { e.stopPropagation(); dragCardId = card.card_id; }); // don't also start the parent tile's group drag
     c.addEventListener('dragend', () => { dragCardId = null; });
     acceptDrag(c);
-    c.addEventListener('drop', e => { e.preventDefault(); e.stopPropagation(); dropCard(group, card); });
+    c.addEventListener('drop', e => {
+      e.preventDefault(); e.stopPropagation();
+      if (dragGroupId != null) { dropGroup(group); return; } // a group dropped on a card nests in the card's group
+      dropCard(group, card);
+    });
 
     if (card.kind === 'file') {
-      c.textContent = `\u{1F5CE} ${card.title || card.ref}`;
+      // Basename on the card; the full ref stays in the tooltip.
+      c.textContent = `\u{1F5CE} ${card.title || card.ref.split('/').pop()}`;
       c.title = card.ref;
       c.style.cursor = 'pointer';
       c.onclick = () => ctx.selectFile(card.ref).catch(error => ctx.notify(error.message, 'error'));
@@ -116,7 +141,7 @@ export function mount(el, ctx) {
   function addCardFlow(group) {
     let kind, ref, title = null;
     if (ctx.selection && confirm(`Card from current selection?\n${ctx.selection.path}`)) {
-      kind = 'file'; ref = ctx.selection.path;
+      kind = 'file'; ref = relative(ctx.selection.path);
     } else {
       kind = (prompt('Card kind: file / link / note', 'note') || '').trim();
       if (!['file', 'link', 'note'].includes(kind)) return kind && ctx.notify(`Unknown kind: ${kind}`, 'error');
@@ -158,12 +183,19 @@ export function mount(el, ctx) {
     for (const card of group.cards) body.appendChild(cardEl(card, group));
     if (!group.groups.length && !group.cards.length) body.appendChild(div('opacity:.5;font-size:12px;padding:6px', 'empty — drop cards here'));
     acceptDrag(body);
-    body.addEventListener('drop', e => { e.preventDefault(); dropCard(group, null); });
+    body.addEventListener('drop', e => {
+      e.preventDefault(); e.stopPropagation();
+      if (dragGroupId != null) { dropGroup(group); return; }
+      dropCard(group, null);
+    });
     return body;
   }
 
   function groupEl(group) {
     const tile = div('border:1px solid #3a3a3a;border-radius:8px;margin:6px;background:#1f1f23;min-width:180px;flex:0 1 auto');
+    tile.draggable = true;
+    tile.addEventListener('dragstart', e => { e.stopPropagation(); dragGroupId = group.group_id; });
+    tile.addEventListener('dragend', () => { dragGroupId = null; });
     tile.appendChild(headerEl(group));
     tile.appendChild(bodyEl(group));
     return tile;
@@ -199,8 +231,10 @@ export function mount(el, ctx) {
       pane.appendChild(bodyEl(open.node));
       el.appendChild(pane);
     } else {
-      const top = div('display:flex;flex-direction:row;flex-wrap:wrap;align-items:flex-start');
+      const top = div('display:flex;flex-direction:row;flex-wrap:wrap;align-items:flex-start;min-height:60px');
       for (const g of data.groups) top.appendChild(groupEl(g));
+      acceptDrag(top);
+      top.addEventListener('drop', e => { e.preventDefault(); if (dragGroupId != null) dropGroup(null); });
       el.appendChild(top);
       const add = btn('＋ group', 'Add top-level group', () => {
         const t = prompt('Group title');

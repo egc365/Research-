@@ -85,6 +85,46 @@ test('remove cascades to subgroups and cards', async t => {
   assert.equal(groups[0].cards.length, 0);
 });
 
+test('nesting stops at depth 3 — add-group and move both enforce it', async t => {
+  const root = workspace(t);
+  const a = await act(root, 'add-group', { title: 'A' });
+  const a1 = await act(root, 'add-group', { parentId: a.group_id, title: 'A1' });
+  const a2 = await act(root, 'add-group', { parentId: a1.group_id, title: 'A2' });
+  // Depth 4 by creation is refused.
+  await assert.rejects(
+    act(root, 'add-group', { parentId: a2.group_id, title: 'A3' }),
+    error => error.code === 'BOARD_DEPTH'
+  );
+  // Depth 4 by moving a subtree is refused: A1 (height 2, holds A2) under A2's
+  // sibling at depth 2 would land A2's copy at depth 4.
+  const b = await act(root, 'add-group', { title: 'B' });
+  const b1 = await act(root, 'add-group', { parentId: b.group_id, title: 'B1' });
+  await assert.rejects(
+    act(root, 'move', { groupId: a1.group_id, toParentId: b1.group_id, sortOrder: 10 }),
+    error => error.code === 'BOARD_DEPTH'
+  );
+  // A leaf group at depth 3 is fine, and so is moving one there.
+  await act(root, 'move', { groupId: a2.group_id, toParentId: b1.group_id, sortOrder: 10 });
+  const { groups } = await act(root, 'tree');
+  assert.deepEqual(groups.map(g => g.title), ['A', 'B']);
+  assert.equal(groups[1].groups[0].groups[0].title, 'A2');
+});
+
+test('a pre-existing deeper tree still renders — the cap gates mutations only', async t => {
+  const root = workspace(t);
+  const a = await act(root, 'add-group', { title: 'A' });
+  const a1 = await act(root, 'add-group', { parentId: a.group_id, title: 'A1' });
+  const a2 = await act(root, 'add-group', { parentId: a1.group_id, title: 'A2' });
+  // Simulate a board written before the cap existed.
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(path.join(root, '.research-ops', 'board.sqlite3'));
+  db.prepare('INSERT INTO board_groups (parent_id, title, orientation, sort_order, created_at) VALUES (?,?,?,?,?)')
+    .run(a2.group_id, 'legacy-depth-4', 'vertical', 100, new Date().toISOString());
+  db.close();
+  const { groups } = await act(root, 'tree');
+  assert.equal(groups[0].groups[0].groups[0].groups[0].title, 'legacy-depth-4');
+});
+
 test('agent surface may read the tree but never mutate', async t => {
   const root = workspace(t);
   const a = await act(root, 'add-group', { title: 'A' });

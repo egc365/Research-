@@ -60,6 +60,25 @@ function mustCard(db, cardId) {
   return row;
 }
 
+// The board stops at three levels of groups (owner rule): root, subgroup, and
+// a third nest for the finest grain. The cap gates mutations only — a deeper
+// tree written before the rule still renders.
+const MAX_DEPTH = 3;
+
+function groupDepth(db, groupId) {
+  let depth = 0;
+  let cursor = groupId;
+  while (cursor != null) { depth++; cursor = mustGroup(db, cursor).parent_id; }
+  return depth;
+}
+
+function subtreeHeight(db, groupId) {
+  const children = db.prepare('SELECT group_id FROM board_groups WHERE parent_id=?').all(groupId);
+  let deepest = 0;
+  for (const child of children) deepest = Math.max(deepest, subtreeHeight(db, child.group_id));
+  return 1 + deepest;
+}
+
 // New siblings land after the last one, with a gap the client can drag into.
 function nextOrder(db, table, where, value) {
   const row = db.prepare(`SELECT MAX(sort_order) AS top FROM ${table} WHERE ${where}`).get(value);
@@ -102,7 +121,12 @@ export const plugin = {
       const title = String(payload.title || '').trim();
       if (!title) throw fail('BOARD_BAD_INPUT', 'A group needs a title');
       const parentId = payload.parentId == null ? null : Number(payload.parentId);
-      if (parentId != null) mustGroup(db, parentId);
+      if (parentId != null) {
+        mustGroup(db, parentId);
+        if (groupDepth(db, parentId) >= MAX_DEPTH) {
+          throw fail('BOARD_DEPTH', `Groups nest at most ${MAX_DEPTH} deep`);
+        }
+      }
       const orientation = payload.orientation || 'vertical';
       if (!['horizontal', 'vertical'].includes(orientation)) throw fail('BOARD_BAD_INPUT', `Unknown orientation: ${orientation}`);
       const sortOrder = nextOrder(db, 'board_groups', parentId == null ? 'parent_id IS NULL AND ?=1' : 'parent_id=?', parentId == null ? 1 : parentId);
@@ -168,6 +192,9 @@ export const plugin = {
         while (cursor != null) {
           if (cursor === group.group_id) throw fail('BOARD_CYCLE', 'Cannot move a group under itself or its own descendant');
           cursor = mustGroup(db, cursor).parent_id;
+        }
+        if (groupDepth(db, toParentId) + subtreeHeight(db, group.group_id) > MAX_DEPTH) {
+          throw fail('BOARD_DEPTH', `Groups nest at most ${MAX_DEPTH} deep`);
         }
       }
       db.prepare('UPDATE board_groups SET parent_id=?, sort_order=? WHERE group_id=?').run(toParentId, sortOrder, group.group_id);
