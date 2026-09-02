@@ -315,6 +315,7 @@ function enabledStations() {
 // home station, Inbox and Workspace are chrome dropdowns, not stations.
 const CATEGORY_ORDER = ['Curate', 'Monitor'];
 const HOME_STATION = 'dashboard-viewer';
+const FRAME_STATIONS = ['dashboard-viewer', 'whiteboard'];
 
 let inboxDispose = null;
 let inboxBadgeEl = null;
@@ -426,6 +427,27 @@ async function fillInbox(panel) {
 
 function fillWorkspaces(panel) {
   panel.replaceChildren();
+  const stations = document.createElement('div');
+  stations.className = 'launch-row';
+  panel.append(stations);
+  for (const id of FRAME_STATIONS) {
+    const row = enabledStations().find(s => s.plugin_id === id);
+    if (!row) continue;
+    const node = document.createElement('div');
+    node.className = 'launch-chip';
+    if (row.plugin_id === kernel.activeStation) node.classList.add('active');
+    const ic = document.createElement('span');
+    ic.className = 'ic';
+    ic.textContent = row.manifest.icon || '🗂';
+    const label = document.createElement('span');
+    label.textContent = row.label;
+    node.append(ic, label);
+    node.onclick = () => {
+      closeNavDrops();
+      activateStation(row.plugin_id);
+    };
+    stations.append(node);
+  }
   const row = document.createElement('div');
   row.className = 'launch-row';
   panel.append(row);
@@ -461,8 +483,10 @@ function renderStationBar() {
   closeNavDrops();
   stationBar.replaceChildren();
   const available = enabledStations();
-  const home = available.find(row => row.plugin_id === HOME_STATION);
-  if (home) stationBar.append(stationButton(home));
+  for (const id of FRAME_STATIONS) {
+    const frame = available.find(row => row.plugin_id === id);
+    if (frame) stationBar.append(stationButton(frame));
+  }
   stationBar.append(navDropdown({
     id: 'navInbox',
     label: 'Inbox',
@@ -481,7 +505,7 @@ function renderStationBar() {
   }));
   const buckets = new Map();
   for (const row of available) {
-    if (row.plugin_id === HOME_STATION) continue;
+    if (FRAME_STATIONS.includes(row.plugin_id)) continue;
     const category = row.manifest.category || 'More';
     if (!buckets.has(category)) buckets.set(category, []);
     buckets.get(category).push(row);

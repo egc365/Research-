@@ -60,6 +60,20 @@ async function api(req, res, url, { store, plugins, surface }) {
     return json(res, 200, store.listDirectory(rootPath, relativePath));
   }
   if (req.method === 'GET' && url.pathname === '/api/file') {
+    if (url.searchParams.get('raw')) {
+      const rootPath = url.searchParams.get('root');
+      const filePath = url.searchParams.get('path');
+      const target = store.assertInsideWorkspace(rootPath, filePath);
+      if (!fs.existsSync(target) || !fs.statSync(target).isFile()) throw new Error('Not a file');
+      const ext = path.extname(target).toLowerCase();
+      const type = ({
+        '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml'
+      })[ext] || 'application/octet-stream';
+      res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store' });
+      fs.createReadStream(target).pipe(res);
+      return true;
+    }
     return json(res, 200, store.readFile(url.searchParams.get('root'), url.searchParams.get('path')));
   }
   if (req.method === 'PUT' && url.pathname === '/api/file') {

@@ -234,7 +234,8 @@ test('agent surface may read the tree but never mutate', async t => {
     ['update-card', { cardId: card.card_id, color: null, text: 'nope' }],
     ['move', { cardId: card.card_id, toGroupId: a.group_id, sortOrder: 5 }],
     ['remove', { cardId: card.card_id }],
-    ['bind-group', { groupId: a.group_id }]
+    ['bind-group', { groupId: a.group_id }],
+    ['save-to-project', { destination: 'projects', name: 'nope', model: { groups: [], cards: [] } }]
   ];
   for (const [action, payload] of mutations) {
     await assert.rejects(act(ws, action, payload, 'agent'), error => error.code === 'OWNER_SURFACE_ONLY');

@@ -5,9 +5,11 @@
 // climb back, drag cards to reorder or move between groups. Every mutation
 // goes through the 'board' service and the whole view repaints from 'tree'.
 import { styleSticky, paletteEl, stickyKey, isolateStickyPointer, colorForLabel, DEFAULT_COLOR } from '/contrib/lib/sticky.js';
+import { boardStore, MAX_IMAGE_BYTES } from '/contrib/lib/board-store.js';
 
-const NAMED_ICONS = ['file', 'folder', 'note', 'link'];
+const NAMED_ICONS = ['file', 'folder', 'note', 'link', 'image'];
 const MAX_FIELDS = 4;
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg)$/i;
 
 export function mount(el, ctx) {
   let disposed = false;
@@ -41,7 +43,9 @@ export function mount(el, ctx) {
   let dragGroupId = null;
 
   const root = () => ctx.workspace?.root_path;
-  const call = (action, payload = {}) => ctx.action('board', action, { rootPath: root(), ...payload });
+  const access = boardStore(ctx, ctx.config);
+  const isWhiteboard = access.mode === 'whiteboard';
+  const call = (action, payload = {}) => access.call(action, payload);
   const editorOpen = () => editingCardId != null || adding != null
     || renamingGroupId != null;
   const mutate = (action, payload) => call(action, payload)
@@ -53,6 +57,20 @@ export function mount(el, ctx) {
     adding = null;
     renamingGroupId = null;
     editColor = undefined;
+  }
+
+  function isImageCard(card) {
+    if (card.kind === 'image') return true;
+    if (card.kind !== 'file') return false;
+    const name = String(card.ref || '').split('/').pop() || '';
+    return IMAGE_EXT.test(name);
+  }
+
+  function imageSrc(card) {
+    if (card.kind === 'image' || String(card.ref || '').startsWith('data:')) return card.ref;
+    const abs = pathAbs(card);
+    if (!abs) return '';
+    return `/api/file?root=${encodeURIComponent(root())}&path=${encodeURIComponent(abs)}&raw=1`;
   }
 
   function pathAbs(card) {
@@ -74,6 +92,7 @@ export function mount(el, ctx) {
   }
 
   function faceTitle(card) {
+    if (card.kind === 'image') return card.title || 'image';
     if (card.kind === 'file') {
       const ref = String(card.ref || '');
       return ref.split('/').filter(Boolean).pop() || ref;
@@ -86,6 +105,7 @@ export function mount(el, ctx) {
   }
 
   function idLine(card) {
+    if (card.kind === 'image') return card.title || 'image';
     if (card.kind === 'file') return card.ref || '';
     if (card.kind === 'folder') return card.ref || card.title || '';
     if (card.kind === 'link') {
@@ -95,6 +115,7 @@ export function mount(el, ctx) {
   }
 
   function stickyText(card) {
+    if (card.kind === 'image') return card.title || '';
     if (card.kind === 'file' || card.kind === 'folder') {
       const key = stickyKey(root(), card.ref);
       return stickies.notes?.[key]?.text || '';
@@ -112,7 +133,11 @@ export function mount(el, ctx) {
   function cardBody(card) {
     if (card.kind === 'note') return noteBody(card);
     if (card.kind === 'link') return card.title || '';
-    if (card.kind === 'file') return previews.get(pathAbs(card)) || '';
+    if (card.kind === 'image') return '';
+    if (card.kind === 'file') {
+      if (isWhiteboard && card.body != null) return String(card.body);
+      return previews.get(pathAbs(card)) || '';
+    }
     return stickyText(card);
   }
 
@@ -146,7 +171,7 @@ export function mount(el, ctx) {
   }
 
   function loadPreview(card) {
-    if (card.kind !== 'file') return;
+    if (card.kind !== 'file' || isWhiteboard || isImageCard(card)) return;
     const abs = pathAbs(card);
     if (!abs || previews.has(abs)) return;
     previews.set(abs, '');
@@ -220,8 +245,44 @@ export function mount(el, ctx) {
   }
 
   const acceptDrag = node => {
-    node.addEventListener('dragover', e => { if (dragCardId != null || dragGroupId != null) e.preventDefault(); });
+    node.addEventListener('dragover', e => {
+      if (dragCardId != null || dragGroupId != null) e.preventDefault();
+      if (isWhiteboard && [...(e.dataTransfer?.types || [])].includes('Files')) e.preventDefault();
+    });
   };
+
+  function ingestFiles(fileList, groupId) {
+    const files = [...fileList].filter(f => f && /^image\//.test(f.type));
+    if (!files.length) return;
+    const jobs = files.map(file => new Promise((resolve, reject) => {
+      if (file.size > MAX_IMAGE_BYTES) {
+        ctx.notify('Image is larger than 2 MB', 'error');
+        resolve(null);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => resolve({ file, dataUrl: reader.result });
+      reader.onerror = () => reject(new Error('Could not read image'));
+      reader.readAsDataURL(file);
+    }));
+    Promise.all(jobs).then(async items => {
+      for (const item of items) {
+        if (!item) continue;
+        await call('add-card', {
+          kind: 'image',
+          groupId,
+          ref: item.dataUrl,
+          title: fileNamePng(item.file.name)
+        });
+      }
+      repaint();
+    }).catch(error => ctx.notify(error.message, 'error'));
+  }
+
+  function fileNamePng(name) {
+    const base = String(name || 'image.png').split(/[\\/]/).pop() || 'image.png';
+    return /\.png$/i.test(base) ? base : base.replace(/\.[^.]+$/, '') + '.png';
+  }
 
   // ---- rendering (DOM API + textContent, so titles/refs need no escaping) --
   const div = (style, text) => {
@@ -239,7 +300,9 @@ export function mount(el, ctx) {
 
   function removeBtn(kind, id, idleTitle) {
     const armed = pendingRemove && pendingRemove.kind === kind && pendingRemove.id === id;
-    const b = btn(armed ? 'board only?' : '✕', armed ? 'Remove from the board. Files and folders stay on disk.' : idleTitle, e => {
+    const armedLabel = isWhiteboard ? 'remove?' : 'board only?';
+    const armedTitle = isWhiteboard ? 'Remove from the whiteboard.' : 'Remove from the board. Files and folders stay on disk.';
+    const b = btn(armed ? armedLabel : '✕', armed ? armedTitle : idleTitle, e => {
       e.stopPropagation();
       if (pendingRemove && pendingRemove.kind === kind && pendingRemove.id === id) {
         clearTimeout(removeTimer);
@@ -249,8 +312,8 @@ export function mount(el, ctx) {
       }
       clearTimeout(removeTimer);
       pendingRemove = { kind, id };
-      b.textContent = 'board only?';
-      b.title = 'Remove from the board. Files and folders stay on disk.';
+      b.textContent = armedLabel;
+      b.title = armedTitle;
       removeTimer = setTimeout(() => {
         if (pendingRemove && pendingRemove.kind === kind && pendingRemove.id === id) {
           pendingRemove = null;
@@ -314,7 +377,7 @@ export function mount(el, ctx) {
   }
 
   function bindEl(card) {
-    if (card.kind !== 'folder' || card.ref) return null;
+    if (isWhiteboard || card.kind !== 'folder' || card.ref) return null;
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'bind';
@@ -370,6 +433,7 @@ export function mount(el, ctx) {
   }
 
   function tagsEl(card) {
+    if (isWhiteboard) return null;
     const abs = pathAbs(card);
     if (!abs) return null;
     const row = document.createElement('div');
@@ -522,10 +586,46 @@ export function mount(el, ctx) {
     return palWrap;
   }
 
+  function imageEl(card) {
+    const wrap = document.createElement('div');
+    wrap.className = 'board-image';
+    isolateStickyPointer(wrap);
+    const img = document.createElement('img');
+    img.alt = faceTitle(card) || 'image';
+    img.src = imageSrc(card);
+    img.draggable = false;
+    if (card.width) wrap.style.width = `${card.width}px`;
+    wrap.appendChild(img);
+    const handle = document.createElement('span');
+    handle.className = 'board-image-handle';
+    handle.title = 'Resize';
+    handle.addEventListener('mousedown', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startW = wrap.getBoundingClientRect().width;
+      const move = ev => {
+        const next = Math.max(80, Math.round(startW + ev.clientX - startX));
+        wrap.style.width = `${next}px`;
+      };
+      const up = ev => {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        const next = Math.max(80, Math.round(startW + ev.clientX - startX));
+        if (isWhiteboard) persistAppearance(card, { width: next });
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    });
+    wrap.appendChild(handle);
+    return wrap;
+  }
+
   const FACES = {
     sticky: card => {
       const inner = document.createDocumentFragment();
       inner.append(iconPicker(card), stickyTextEl(card));
+      if (isImageCard(card)) inner.appendChild(imageEl(card));
       const bind = bindEl(card);
       if (bind) inner.appendChild(bind);
       if (card.kind === 'folder') inner.appendChild(openEl(card));
@@ -549,13 +649,18 @@ export function mount(el, ctx) {
       const title = document.createElement('div');
       title.className = 'title';
       title.textContent = faceTitle(card);
-      const body = document.createElement('div');
-      body.className = 'body';
-      body.textContent = cardBody(card);
       inner.append(id, title);
       const tags = tagsEl(card);
       if (tags) inner.appendChild(tags);
-      inner.append(fieldsEl(card), body);
+      inner.appendChild(fieldsEl(card));
+      if (isImageCard(card)) {
+        inner.appendChild(imageEl(card));
+      } else {
+        const body = document.createElement('div');
+        body.className = 'body';
+        body.textContent = cardBody(card);
+        inner.appendChild(body);
+      }
       const bind = bindEl(card);
       if (bind) inner.appendChild(bind);
       if (card.kind === 'folder') inner.appendChild(openEl(card));
@@ -572,6 +677,7 @@ export function mount(el, ctx) {
     c.dataset.kind = card.kind;
     c.dataset.face = face;
     c.dataset.icon = card.icon || card.kind;
+    if (isImageCard(card)) c.dataset.image = '1';
     if (card.kind === 'file') c.dataset.ref = stickyKey(root(), card.ref) || card.ref;
     else if (card.kind === 'folder') {
       c.dataset.groupId = String(card.group_id);
@@ -601,7 +707,7 @@ export function mount(el, ctx) {
       dropCard(group, card);
     });
 
-    if (card.kind === 'file') {
+    if (card.kind === 'file' && !isWhiteboard) {
       const select = e => {
         e.stopPropagation();
         ctx.selectFile(card.ref).catch(error => ctx.notify(error.message, 'error'));
@@ -774,7 +880,7 @@ export function mount(el, ctx) {
       };
       h.appendChild(title);
     }
-    if (!group.folder_path) {
+    if (!isWhiteboard && !group.folder_path) {
       const mark = div('font-size:11px;opacity:.7', 'unbound');
       mark.className = 'board-unbound';
       h.appendChild(mark);
@@ -811,6 +917,7 @@ export function mount(el, ctx) {
     acceptDrag(body);
     body.addEventListener('drop', e => {
       e.preventDefault(); e.stopPropagation();
+      if (isWhiteboard && e.dataTransfer.files?.length) { ingestFiles(e.dataTransfer.files, group.group_id); return; }
       if (dragGroupId != null) { dropGroup(group); return; }
       dropCard(group, null);
     });
@@ -820,7 +927,7 @@ export function mount(el, ctx) {
   function breadcrumbEl() {
     const bar = div('display:flex;align-items:center;gap:6px;padding:4px 2px;font-size:13px');
     const home = document.createElement('a');
-    home.href = '#'; home.textContent = 'Board';
+    home.href = '#'; home.textContent = isWhiteboard ? 'Whiteboard' : 'Board';
     home.onclick = e => { e.preventDefault(); crumb = []; emitPath(); paint(); };
     bar.appendChild(home);
     crumb.forEach((step, i) => {
@@ -839,6 +946,116 @@ export function mount(el, ctx) {
     return add;
   }
 
+  function saveBtn() {
+    const b = btn('Save to project', 'Write this sketch as folders and files, then open it as a Board', () => openSaveDialog());
+    b.className = 'primary';
+    b.style.margin = '6px';
+    return b;
+  }
+
+  function openSaveDialog() {
+    el.querySelector('.board-save-dialog')?.remove();
+    const dlg = document.createElement('dialog');
+    dlg.className = 'board-save-dialog';
+    const head = document.createElement('div');
+    head.className = 'pm-head';
+    const title = document.createElement('strong');
+    title.textContent = 'Save to project';
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.textContent = 'Close';
+    close.onclick = () => dlg.close();
+    head.append(title, close);
+    const body = document.createElement('div');
+    body.className = 'pm-body';
+    const destLab = document.createElement('label');
+    destLab.textContent = 'Destination folder';
+    const destInput = document.createElement('input');
+    destInput.type = 'text';
+    destInput.className = 'board-save-dest';
+    destInput.placeholder = 'projects';
+    destInput.value = 'projects';
+    destLab.appendChild(destInput);
+    const treeHost = document.createElement('div');
+    treeHost.className = 'board-save-tree';
+    const nameLab = document.createElement('label');
+    nameLab.textContent = 'Project name';
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.placeholder = 'Q3 plan';
+    nameLab.appendChild(nameInput);
+    const go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'primary';
+    go.textContent = 'Save to project';
+    const status = document.createElement('div');
+    status.className = 'muted';
+    body.append(destLab, treeHost, nameLab, go, status);
+    dlg.append(head, body);
+    el.appendChild(dlg);
+    dlg.showModal();
+
+    function pick(rel) {
+      destInput.value = rel === '.' ? '' : rel;
+    }
+
+    async function fillTree(relativePath, container, depth) {
+      let entries;
+      try {
+        entries = await ctx.request(`/api/tree?root=${encodeURIComponent(root())}&path=${encodeURIComponent(relativePath)}`);
+      } catch (error) {
+        container.textContent = error.message;
+        return;
+      }
+      for (const entry of entries) {
+        if (entry.type !== 'directory') continue;
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'board-save-folder';
+        row.style.marginLeft = `${depth * 12}px`;
+        row.textContent = entry.name;
+        row.onclick = () => {
+          pick(entry.relativePath);
+          if (row.dataset.open === '1') {
+            row.dataset.open = '';
+            while (row.nextSibling && row.nextSibling.dataset?.parent === entry.relativePath) row.nextSibling.remove();
+            return;
+          }
+          row.dataset.open = '1';
+          const nest = document.createElement('div');
+          nest.dataset.parent = entry.relativePath;
+          row.after(nest);
+          fillTree(entry.relativePath, nest, depth + 1);
+        };
+        container.appendChild(row);
+      }
+    }
+
+    const rootPick = document.createElement('button');
+    rootPick.type = 'button';
+    rootPick.className = 'board-save-folder';
+    rootPick.textContent = 'workspace root';
+    rootPick.onclick = () => pick('.');
+    treeHost.appendChild(rootPick);
+    fillTree('.', treeHost, 1);
+
+    go.onclick = async () => {
+      const destination = destInput.value.trim();
+      const name = nameInput.value.trim();
+      if (!name) { status.textContent = 'A project name is required.'; return; }
+      go.disabled = true;
+      try {
+        await call('save-to-project', { destination: destination === '.' ? '' : destination, name });
+        dlg.close();
+        ctx.notify(`Saved ${name} to ${destination || 'workspace root'}.`, 'ok');
+        ctx.activateStation('dashboard-viewer');
+      } catch (error) {
+        status.textContent = error.message;
+        go.disabled = false;
+      }
+    };
+  }
+
   function paint() {
     if (disposed) return;
     el.innerHTML = '';
@@ -848,11 +1065,13 @@ export function mount(el, ctx) {
     if (open) {
       crumb = open.trail;
       el.appendChild(breadcrumbEl());
+      if (isWhiteboard) el.appendChild(saveBtn());
       const pane = div('');
       pane.appendChild(headerEl(open.node, crumb.length));
       pane.appendChild(bodyEl(open.node, crumb.length));
       el.appendChild(pane);
     } else if (!data.groups.length && !(data.cards || []).length) {
+      if (isWhiteboard) el.appendChild(saveBtn());
       el.appendChild(addTopGroupBtn());
       if (adding && adding.groupId == null) el.appendChild(addFormEl(null, 0));
     } else {
@@ -862,8 +1081,13 @@ export function mount(el, ctx) {
       for (const g of data.groups) top.appendChild(cardEl(folderCard(g), g));
       for (const card of data.cards || []) top.appendChild(cardEl(card, { group_id: null, cards: data.cards, groups: data.groups }));
       acceptDrag(top);
-      top.addEventListener('drop', e => { e.preventDefault(); if (dragGroupId != null) dropGroup(null); });
+      top.addEventListener('drop', e => {
+        e.preventDefault();
+        if (isWhiteboard && e.dataTransfer.files?.length) { ingestFiles(e.dataTransfer.files, null); return; }
+        if (dragGroupId != null) dropGroup(null);
+      });
       el.appendChild(top);
+      if (isWhiteboard) el.appendChild(saveBtn());
       el.appendChild(addTopGroupBtn());
       if (adding && adding.groupId == null) el.appendChild(addFormEl(null, 0));
     }
@@ -877,8 +1101,8 @@ export function mount(el, ctx) {
     if (!root()) { paint(); return; }
     Promise.all([
       call('tree'),
-      ctx.action('stickies', 'list', { rootPath: root() }).catch(() => ({ notes: {} })),
-      ctx.request('/api/path-labels?root=' + encodeURIComponent(root())).catch(() => ({})),
+      isWhiteboard ? Promise.resolve({ notes: {} }) : ctx.action('stickies', 'list', { rootPath: root() }).catch(() => ({ notes: {} })),
+      isWhiteboard ? Promise.resolve({}) : ctx.request('/api/path-labels?root=' + encodeURIComponent(root())).catch(() => ({})),
     ])
       .then(([t, s, l]) => {
         if (disposed) return;
@@ -902,6 +1126,25 @@ export function mount(el, ctx) {
     repaint();
   });
   ctx.bus.on('labels-changed', () => { if (!disposed) repaint(); });
+  function onPaste(e) {
+    if (!isWhiteboard || disposed) return;
+    const items = [...(e.clipboardData?.items || [])];
+    const files = items.filter(item => item.type.startsWith('image/')).map(item => item.getAsFile()).filter(Boolean);
+    if (!files.length) return;
+    e.preventDefault();
+    const groupId = crumb.length ? crumb[crumb.length - 1].group_id : null;
+    ingestFiles(files, groupId);
+  }
+  document.addEventListener('paste', onPaste);
+  el.addEventListener('dragover', e => {
+    if (isWhiteboard && [...(e.dataTransfer?.types || [])].includes('Files')) e.preventDefault();
+  });
+  el.addEventListener('drop', e => {
+    if (!isWhiteboard || !e.dataTransfer.files?.length) return;
+    e.preventDefault();
+    const groupId = crumb.length ? crumb[crumb.length - 1].group_id : null;
+    ingestFiles(e.dataTransfer.files, groupId);
+  });
   repaint();
-  return () => { disposed = true; clearTimeout(removeTimer); };
+  return () => { disposed = true; clearTimeout(removeTimer); document.removeEventListener('paste', onPaste); };
 }

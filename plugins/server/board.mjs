@@ -95,7 +95,7 @@ function fail(code, message) {
   return error;
 }
 
-const NAMED_ICONS = ['file', 'folder', 'note', 'link'];
+const NAMED_ICONS = ['file', 'folder', 'note', 'link', 'image'];
 const MAX_FIELDS = 4;
 
 function defaultFace(kind) {
@@ -277,6 +277,167 @@ async function writeNewFile({ store, plugins, rootPath, rel, content }) {
     createOnly: true
   });
   return written.relativePath;
+}
+
+function destRel(raw) {
+  const s = String(raw || '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  if (!s || s === '.') return '';
+  const parts = s.split('/');
+  for (const p of parts) {
+    if (!p || p === '.' || p === '..') throw fail('BOARD_BAD_INPUT', 'Destination is a folder inside the workspace');
+  }
+  return parts.join('/');
+}
+
+function slugFile(text, ext) {
+  const first = String(text || '').trim().split(/\n/)[0];
+  const slug = first.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+  return `${slug || 'note'}${ext}`;
+}
+
+function uniqueName(used, name) {
+  if (!used.has(name)) { used.add(name); return name; }
+  const dot = name.lastIndexOf('.');
+  const base = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : '';
+  let i = 2;
+  while (used.has(`${base}-${i}${ext}`)) i++;
+  const next = `${base}-${i}${ext}`;
+  used.add(next);
+  return next;
+}
+
+function textBody(raw) {
+  const body = raw == null ? '' : String(raw);
+  return body && !body.endsWith('\n') ? `${body}\n` : body;
+}
+
+function imageBuffer(ref) {
+  const s = String(ref || '');
+  const m = /^data:image\/[a-zA-Z0-9+.-]+;base64,(.+)$/.exec(s);
+  if (!m) throw fail('BOARD_BAD_INPUT', 'Image card needs a data URL');
+  const buf = Buffer.from(m[1], 'base64');
+  if (buf.length > 2 * 1024 * 1024) throw fail('BOARD_BAD_INPUT', 'Image is larger than 2 MB');
+  return buf;
+}
+
+function imageFileName(card) {
+  const t = String(card.title || '').trim();
+  if (t && /\.png$/i.test(t) && !/[\\/]/.test(t)) return needName(t);
+  if (t && !/[\\/]/.test(t) && /\.(png|jpe?g|gif|webp)$/i.test(t)) {
+    return needName(t.replace(/\.[^.]+$/, '.png'));
+  }
+  return slugFile(t || 'image', '.png');
+}
+
+function asTree(model) {
+  if (!model || typeof model !== 'object') throw fail('BOARD_BAD_INPUT', 'Save needs a model');
+  const groups = Array.isArray(model.groups) ? model.groups : [];
+  const cards = Array.isArray(model.cards) ? model.cards : [];
+  if (groups.some(g => Array.isArray(g.groups) || Array.isArray(g.cards))) return { groups, cards };
+  const viewed = groups.map(g => ({ ...g, groups: [], cards: [] }));
+  const byId = new Map(viewed.map(g => [g.group_id, g]));
+  const rootCards = [];
+  for (const card of cards) {
+    if (card.group_id == null) rootCards.push(card);
+    else byId.get(card.group_id)?.cards.push(card);
+  }
+  const roots = [];
+  for (const node of byId.values()) {
+    if (node.parent_id != null && byId.has(node.parent_id)) byId.get(node.parent_id).groups.push(node);
+    else roots.push(node);
+  }
+  return { groups: roots, cards: rootCards };
+}
+
+function insertBoundGroup(db, { parentId, title, orientation, folder_path, color, face, icon, fields_json, now }) {
+  if (!['horizontal', 'vertical'].includes(orientation)) orientation = 'vertical';
+  if (color != null && !STICKY_COLORS.includes(color)) throw fail('BOARD_BAD_INPUT', `Not a sticky color: ${color}`);
+  const sortOrder = nextOrder(db, 'board_groups', parentId == null ? 'parent_id IS NULL AND ?=1' : 'parent_id=?', parentId == null ? 1 : parentId);
+  const { lastInsertRowid } = db.prepare(
+    'INSERT INTO board_groups (parent_id, title, orientation, sort_order, folder_path, color, created_at, face, icon, fields_json) VALUES (?,?,?,?,?,?,?,?,?,?)'
+  ).run(parentId, title, orientation, sortOrder, folder_path, color, now(), face || 'sticky', icon || 'folder', fields_json || '[]');
+  return mustGroup(db, Number(lastInsertRowid));
+}
+
+function insertFileCard(db, { groupId, ref, title, color, face, icon, fields_json, now }) {
+  if (color != null && !STICKY_COLORS.includes(color)) throw fail('BOARD_BAD_INPUT', `Not a sticky color: ${color}`);
+  const sortWhere = groupId == null ? 'group_id IS NULL AND ?=1' : 'group_id=?';
+  const sortValue = groupId == null ? 1 : groupId;
+  const sortOrder = nextOrder(db, 'board_cards', sortWhere, sortValue);
+  const { lastInsertRowid } = db.prepare(
+    'INSERT INTO board_cards (group_id, kind, ref, title, color, sort_order, created_at, face, icon, fields_json) VALUES (?,?,?,?,?,?,?,?,?,?)'
+  ).run(groupId, 'file', ref, title, color, sortOrder, now(), face || 'card', icon || 'file', fields_json || '[]');
+  return mustCard(db, Number(lastInsertRowid));
+}
+
+async function saveCards(db, { store, plugins, rootPath, parentRel, parentId, cards, now }) {
+  const used = new Set();
+  const out = [];
+  for (const card of cards || []) {
+    const kind = String(card.kind || '');
+    const color = card.color == null ? null : String(card.color);
+    const fields_json = parseFields(card, card.fields_json || '[]');
+    let name;
+    let content;
+    let title = card.title == null ? null : String(card.title);
+    let iconKind = 'file';
+    if (kind === 'image') {
+      name = uniqueName(used, imageFileName(card));
+      content = imageBuffer(card.ref);
+      iconKind = 'image';
+      if (title == null) title = name;
+    } else if (kind === 'file') {
+      name = uniqueName(used, needName(String(card.ref || card.title || 'file.md').split(/[\\/]/).pop()));
+      content = textBody(card.body != null ? card.body : '');
+      if (title == null && String(content).trim()) title = String(content).trim().split('\n')[0];
+    } else if (kind === 'note') {
+      name = uniqueName(used, slugFile(card.ref || card.title || 'note', '.md'));
+      content = textBody(card.ref || '');
+      iconKind = 'note';
+      if (title == null) title = String(card.ref || '').split('\n')[0] || name;
+    } else if (kind === 'link') {
+      name = uniqueName(used, slugFile(card.title || card.ref || 'link', '.md'));
+      content = textBody(card.ref || '');
+      iconKind = 'link';
+    } else {
+      throw fail('BOARD_BAD_INPUT', `Unknown card kind: ${kind}`);
+    }
+    const face = parseFace(card.face, defaultFace(kind === 'folder' ? 'folder' : 'file'));
+    const icon = parseIcon(card.icon, defaultIcon(iconKind));
+    const rel = childRel(parentRel, name);
+    const ref = await writeNewFile({ store, plugins, rootPath, rel, content });
+    out.push(insertFileCard(db, { groupId: parentId, ref, title: title || name, color, face, icon, fields_json, now }));
+  }
+  return out;
+}
+
+async function saveGroups(db, ctx, groups, parentId, parentRel) {
+  const out = [];
+  for (const g of groups || []) {
+    if (parentId != null && groupDepth(db, parentId) >= MAX_DEPTH) {
+      throw fail('BOARD_DEPTH', `Groups nest at most ${MAX_DEPTH} deep`);
+    }
+    const title = needName(g.title);
+    const folder_path = childRel(parentRel, title);
+    ensureFolder(ctx.store, ctx.rootPath, folder_path);
+    const color = g.color == null ? null : String(g.color);
+    const row = insertBoundGroup(db, {
+      parentId,
+      title,
+      orientation: g.orientation === 'horizontal' ? 'horizontal' : 'vertical',
+      folder_path,
+      color,
+      face: parseFace(g.face, 'sticky'),
+      icon: parseIcon(g.icon, 'folder'),
+      fields_json: parseFields(g, g.fields_json || '[]'),
+      now: ctx.now
+    });
+    await saveCards(db, { ...ctx, parentRel: folder_path, parentId: row.group_id, cards: g.cards });
+    await saveGroups(db, ctx, g.groups, row.group_id, folder_path);
+    out.push(row);
+  }
+  return out;
 }
 
 function tree(db) {
@@ -490,6 +651,26 @@ export const plugin = {
       mustGroup(db, Number(payload.groupId));
       db.prepare('DELETE FROM board_groups WHERE group_id=?').run(Number(payload.groupId));
       return { removed: 'group', groupId: Number(payload.groupId), disk: 'left' };
+    }
+
+    if (action === 'save-to-project') {
+      const dest = destRel(payload.destination);
+      const name = needName(payload.name);
+      const target = dest ? absIn(rootPath, dest) : path.resolve(rootPath);
+      mustStore(store).assertInsideWorkspace(rootPath, target);
+      if (fs.existsSync(target)) {
+        if (!fs.statSync(target).isDirectory()) throw fail('BOARD_BAD_INPUT', `Not a folder: ${dest || '.'}`);
+        const entries = store.listDirectory(rootPath, dest || '.');
+        if (entries.length) throw fail('BOARD_NONEMPTY', 'Destination is not empty');
+      } else {
+        store.createDirectory({ rootPath, dirPath: target, actor: 'human' });
+      }
+      const sketched = asTree(payload.model);
+      const ctx = { store, plugins, rootPath, now };
+      await saveGroups(db, ctx, sketched.groups, null, dest);
+      await saveCards(db, { ...ctx, parentRel: dest, parentId: null, cards: sketched.cards });
+      const bound = tree(db);
+      return { destination: dest, name, label: name, groups: bound.groups, cards: bound.cards };
     }
 
     throw new Error(`Unknown board action: ${action}`);

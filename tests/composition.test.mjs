@@ -198,8 +198,8 @@ test('file-workbench is retired: no station row, no wiring, category on every su
   const catalog = store.listCatalog();
   assert.equal(catalog.some(r => r.plugin_id === 'file-workbench'), false);
   for (const row of catalog.filter(r => r.plugin_kind === 'station')) {
-    if (row.plugin_id === 'dashboard-viewer') {
-      assert.equal(row.manifest.category, undefined, 'Board is the frame, not a nav group');
+    if (row.plugin_id === 'dashboard-viewer' || row.plugin_id === 'whiteboard') {
+      assert.equal(row.manifest.category, undefined, 'Board and Whiteboard sit in the frame, not a nav group');
       continue;
     }
     assert.ok(row.manifest.category, `${row.plugin_id} has a nav category`);
