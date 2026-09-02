@@ -54,7 +54,6 @@ export function isolateStickyPointer(el) {
     if (e.target.tagName !== 'TEXTAREA' && e.target.tagName !== 'INPUT') e.preventDefault();
   });
   el.addEventListener('click', e => e.stopPropagation());
-  el.addEventListener('dragstart', e => { e.stopPropagation(); e.preventDefault(); });
 }
 
 export function mountPathSticky(host, opts) {
