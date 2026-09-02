@@ -125,10 +125,6 @@ export function mount(el, ctx) {
     }
   }
 
-  function editValue(card) {
-    return stickyText(card);
-  }
-
   function folderCard(group) {
     return {
       kind: 'folder',
@@ -161,7 +157,7 @@ export function mount(el, ctx) {
         const node = el.querySelector(`.board-card[data-kind="file"][data-ref="${CSS.escape(stickyKey(root(), card.ref) || card.ref)}"] .body`);
         if (node && !node.querySelector('textarea')) node.textContent = text;
       })
-      .catch(() => {});
+      .catch(() => { previews.delete(abs); });
   }
 
   function findPath(groups, id, trail = []) {
@@ -374,11 +370,12 @@ export function mount(el, ctx) {
   }
 
   function tagsEl(card) {
+    const abs = pathAbs(card);
+    if (!abs) return null;
     const row = document.createElement('div');
     row.className = 'tags';
     isolateStickyPointer(row);
-    const abs = pathAbs(card);
-    const pathLabels = abs ? (labels[abs] || labels[card.ref] || []) : [];
+    const pathLabels = labels[abs] || labels[card.ref] || [];
     for (const a of pathLabels) {
       const chip = document.createElement('span');
       chip.className = 'label-chip';
@@ -387,17 +384,15 @@ export function mount(el, ctx) {
       chip.textContent = a.label;
       row.appendChild(chip);
     }
-    if (abs) {
-      const add = document.createElement('button');
-      add.type = 'button';
-      add.className = 'tag-add';
-      add.textContent = '＋ tag';
-      add.onclick = e => {
-        e.stopPropagation();
-        ctx.bus.emit('open-labels', { path: abs });
-      };
-      row.appendChild(add);
-    }
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'tag-add';
+    add.textContent = '＋ tag';
+    add.onclick = e => {
+      e.stopPropagation();
+      ctx.bus.emit('open-labels', { path: abs });
+    };
+    row.appendChild(add);
     return row;
   }
 
@@ -428,7 +423,11 @@ export function mount(el, ctx) {
       lab.placeholder = 'label';
       const val = document.createElement('input');
       val.placeholder = 'value';
+      let closed = false;
       const save = () => {
+        if (closed) return;
+        closed = true;
+        form.remove();
         const label = lab.value.trim();
         const value = val.value.trim();
         if (!label && !value) { paint(); return; }
@@ -453,7 +452,7 @@ export function mount(el, ctx) {
     if (editing) {
       const area = document.createElement('textarea');
       area.rows = 3;
-      area.value = editValue(card);
+      area.value = stickyText(card);
       area.style.cssText = 'width:100%;background:rgba(255,255,255,.55);color:#222;border:1px solid rgba(0,0,0,.3);border-radius:4px;padding:2px 4px;font:inherit;resize:vertical';
       isolateStickyPointer(area);
       let cancelled = false;
@@ -553,7 +552,10 @@ export function mount(el, ctx) {
       const body = document.createElement('div');
       body.className = 'body';
       body.textContent = cardBody(card);
-      inner.append(id, title, tagsEl(card), fieldsEl(card), body);
+      inner.append(id, title);
+      const tags = tagsEl(card);
+      if (tags) inner.appendChild(tags);
+      inner.append(fieldsEl(card), body);
       const bind = bindEl(card);
       if (bind) inner.appendChild(bind);
       if (card.kind === 'folder') inner.appendChild(openEl(card));

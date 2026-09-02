@@ -417,6 +417,10 @@ test('face persists', async t => {
     act(ws, 'update-card', { cardId: file.card_id, face: 'back' }),
     e => e.code === 'BOARD_BAD_INPUT'
   );
+  await assert.rejects(
+    act(ws, 'update-card', { cardId: file.card_id, icon: 'xyz' }),
+    e => e.code === 'BOARD_BAD_INPUT'
+  );
 });
 
 test('unbound group from before folder_path still renders and bind-group writes the folder', async t => {
