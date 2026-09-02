@@ -16,7 +16,7 @@ export const plugin = {
       `).all(payload.rootPath);
     }
     if (action === 'recent') {
-      return store.recentActivity(payload.rootPath, payload.limit || 12);
+      return store.recentActivity(payload.rootPath, payload.limit || 12, payload.actor || null);
     }
     throw new Error(`Unknown registry action: ${action}`);
   }

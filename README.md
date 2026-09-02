@@ -57,9 +57,18 @@ Three levels:
   candidate-list (validation queue card wall), decision-controls,
   validation-result, label-editor (dialog from the tree; labels/path_labels in
   the crosswalk), project-create-form, trace-lanes-view,
-  execution-state-view). Stations compose them; no
+  execution-state-view, inbox, activity-view). Stations compose them; no
   contribution is copied into two stations, and contributions talk only
   through the kernel bus and services — never by importing each other.
+
+Inbox is a top-level nav dropdown, not a station. It lists artifacts in
+`candidate` or `validated` (the two states that need a verdict), grouped by
+workspace, with a count badge on the button. Point it at a workspace-relative
+folder with config `{ watch: 'outputs' }`; the default watches nothing. That
+key lives on the workspace `inbox` preference (chrome) or on an inbox wiring
+row. Files in the watched folder that are not yet registered show a register-
+as-candidate action. Activity is a separate contribution (`activity-view`) on
+the Provenance station, after the timeline, and listens to `actor-filter`.
 
 SQLite is the composition crosswalk (routing/configuration, never content):
 `ui_plugins` (the catalog, synced from `plugins/registry.mjs` at boot without

@@ -220,6 +220,19 @@ async function api(req, res, url, { store, plugins, surface }) {
     }));
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/inbox/count') {
+    const root = url.searchParams.get('root');
+    return json(res, 200, { count: store.verdictCount(root || null) });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/inbox') {
+    const root = url.searchParams.get('root');
+    const watch = url.searchParams.get('watch') || '';
+    return json(res, 200, {
+      verdicts: store.listVerdicts(null),
+      unregistered: root && watch ? store.listUnregisteredWatch(root, watch) : []
+    });
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/plugins') return json(res, 200, plugins.manifest());
   const match = url.pathname.match(/^\/api\/plugins\/([^/]+)\/action$/);
   if (req.method === 'POST' && match) {
