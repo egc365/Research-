@@ -10,9 +10,9 @@ export { STICKY_COLORS };
 // Lanes nest at most three deep on a surface (ADR-029). Depth 3 holds cards only.
 export const MAX_DEPTH = 3;
 export const MAX_FIELDS = 4;
-export const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 export const NAMED_ICONS = ['file', 'folder', 'note', 'link', 'image'];
-export const ORIENTATIONS = ['horizontal', 'vertical'];
+const ORIENTATIONS = ['horizontal', 'vertical'];
 
 const IMAGE_EXT = { png: 'png', jpeg: 'jpg', jpg: 'jpg', gif: 'gif', webp: 'webp', 'svg+xml': 'svg', bmp: 'bmp', avif: 'avif' };
 
