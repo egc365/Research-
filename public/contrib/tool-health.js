@@ -41,7 +41,7 @@ export function mount(el, ctx) {
       : `<span class="state-badge" style="background:#3a1d1d;color:#e08f8f">down · ${ctx.esc(String(r.error))}</span>`;
     el.innerHTML = `
       <div class="card">
-        <h3>Tool health <span class="muted" style="font-weight:normal">checked ${ctx.esc(checkedAt.slice(11, 19))}Z · <a href="#" data-role="refresh">refresh</a></span></h3>
+        <div class="muted">checked ${ctx.esc(checkedAt.slice(11, 19))}Z · <a href="#" data-role="refresh">refresh</a></div>
         ${results.map(r => `
           <div class="keyval">
             <div class="key">${ctx.esc(r.label)}</div>

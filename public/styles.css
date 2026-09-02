@@ -54,6 +54,7 @@ body { margin: 0; background: var(--background); color: var(--text);
   padding: var(--spacing); box-shadow: 0 8px 24px #0006; }
 .nav-drop.open > button { border-color: var(--accent); }
 .launch-chip.active { border-color: var(--accent); }
+.launch-chip.current { border-color: var(--accent); }
 .board-frame-chrome { display: flex; justify-content: flex-end; margin-bottom: 6px; }
 
 /* ------------------------------------------------------------------ shell
@@ -306,6 +307,12 @@ button:disabled { opacity: .45; cursor: default; }
 .folder-card:hover { border-color: var(--accent); }
 .folder-card .name { font-weight: 600; margin-bottom: 4px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
+.board-group-pane { background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius); }
+.board-group-head { display: flex; align-items: center; gap: 4px;
+  padding: 4px 6px; border-bottom: 1px solid var(--border); color: var(--text); }
+.board-head-btn { background: none; border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text); cursor: pointer; padding: 0 6px; margin-left: 4px; font-size: 12px; }
 .board-card { min-width: 140px; max-width: 240px; margin: 4px; height: auto; overflow: visible; }
 .board-card[data-image] { max-width: none; }
 .board-card .board-image { position: relative; width: 180px; max-width: 100%; }

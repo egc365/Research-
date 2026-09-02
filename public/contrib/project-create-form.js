@@ -3,7 +3,7 @@
 // ledger from its first byte.
 export function mount(el, ctx) {
   el.innerHTML = `
-    <div class="card" style="max-width:520px;margin:24px auto"><h3>New project</h3>
+    <div class="card" style="max-width:520px;margin:24px auto">
       <div class="keyval"><div class="key">Workspace</div><div class="mono">${ctx.esc(ctx.workspace?.root_path || '—')}</div></div>
       <input data-role="name" placeholder="project-name (folder under the workspace)" style="width:100%;margin-top:8px">
       <textarea data-role="summary" rows="3" style="width:100%;margin-top:6px" placeholder="One-paragraph summary for the README"></textarea>

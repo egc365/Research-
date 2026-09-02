@@ -97,7 +97,11 @@ export function mount(el, ctx) {
       const ref = String(card.ref || '');
       return ref.split('/').filter(Boolean).pop() || ref;
     }
-    if (card.kind === 'folder') return card.title || card.ref || '';
+    if (card.kind === 'folder') {
+      if (card.title) return card.title;
+      const ref = String(card.ref || '');
+      return ref.split('/').filter(Boolean).pop() || ref;
+    }
     if (card.kind === 'link') {
       try { return new URL(card.ref).host || card.ref; } catch { return card.ref; }
     }
@@ -116,7 +120,8 @@ export function mount(el, ctx) {
 
   function stickyText(card) {
     if (card.kind === 'image') return card.title || '';
-    if (card.kind === 'file' || card.kind === 'folder') {
+    if (card.kind === 'folder') return faceTitle(card);
+    if (card.kind === 'file') {
       const key = stickyKey(root(), card.ref);
       return stickies.notes?.[key]?.text || '';
     }
@@ -293,8 +298,9 @@ export function mount(el, ctx) {
   };
   const btn = (glyph, title, onclick) => {
     const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'board-head-btn';
     b.textContent = glyph; b.title = title; b.onclick = onclick;
-    b.style.cssText = 'background:none;border:1px solid #444;border-radius:4px;color:inherit;cursor:pointer;padding:0 6px;margin-left:4px;font-size:12px';
     return b;
   };
 
@@ -338,13 +344,22 @@ export function mount(el, ctx) {
     const identity = card.kind === 'folder' ? { groupId: card.group_id } : { cardId: card.card_id };
     const patch = { ...identity };
     if (colorPick !== undefined) patch.color = colorPick;
-    if (card.kind === 'file' || card.kind === 'folder') {
+    if (card.kind === 'file') {
       const writes = [];
       if (colorPick !== undefined) writes.push(call('update-card', patch));
       const key = stickyKey(root(), card.ref);
       if (key && !key.startsWith('/')) {
         writes.push(ctx.action('stickies', 'set', { rootPath: root(), path: key, text, color: resolveColor(next) }));
       }
+      if (!writes.length) { paint(); return; }
+      Promise.all(writes).then(repaint).catch(error => { ctx.notify(error.message, 'error'); repaint(); });
+      return;
+    }
+    if (card.kind === 'folder') {
+      const writes = [];
+      if (colorPick !== undefined) writes.push(call('update-card', patch));
+      const v = String(text || '').trim();
+      if (v && v !== (card.title || '')) writes.push(call('rename', { groupId: card.group_id, title: v }));
       if (!writes.length) { paint(); return; }
       Promise.all(writes).then(repaint).catch(error => { ctx.notify(error.message, 'error'); repaint(); });
       return;
@@ -850,7 +865,7 @@ export function mount(el, ctx) {
 
   function headerEl(group, depth) {
     const h = document.createElement('header');
-    h.style.cssText = 'display:flex;align-items:center;gap:4px;padding:4px 6px;border-bottom:1px solid #333';
+    h.className = 'board-group-head';
     if (renamingGroupId === group.group_id) {
       const input = document.createElement('input');
       input.className = 'board-group-title-edit';
@@ -882,7 +897,6 @@ export function mount(el, ctx) {
     }
     if (!isWhiteboard && !group.folder_path) {
       const mark = div('font-size:11px;opacity:.7', 'unbound');
-      mark.className = 'board-unbound';
       h.appendChild(mark);
       h.appendChild(btn('bind to folder', 'Create the folder by this group name', e => {
         e.stopPropagation();
@@ -1067,6 +1081,7 @@ export function mount(el, ctx) {
       el.appendChild(breadcrumbEl());
       if (isWhiteboard) el.appendChild(saveBtn());
       const pane = div('');
+      pane.className = 'board-group-pane';
       pane.appendChild(headerEl(open.node, crumb.length));
       pane.appendChild(bodyEl(open.node, crumb.length));
       el.appendChild(pane);

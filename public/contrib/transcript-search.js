@@ -7,7 +7,6 @@ export function mount(el, ctx) {
 
   el.innerHTML = `
     <div class="card">
-      <h3>Transcript search</h3>
       <div data-role="bots" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px"></div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:6px;margin-bottom:8px">
         <select data-f="session"><option value="">— all recent sessions —</option></select>

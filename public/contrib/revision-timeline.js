@@ -20,7 +20,7 @@ export function mount(el, ctx) {
       }))
     ].filter(item => !actor || item.actor === actor)
      .sort((a, b) => b.at.localeCompare(a.at));
-    el.innerHTML = `<div class="card"><h3>Timeline${actor ? ` — actor: ${ctx.esc(actor)}` : ''} (${items.length})</h3>
+    el.innerHTML = `<div class="card">${actor ? `<div class="muted">actor: ${ctx.esc(actor)} · ${items.length}</div>` : `<div class="muted">${items.length}</div>`}
       <div data-role="items"></div></div>`;
     const host = el.querySelector('[data-role="items"]');
     for (const item of items.slice(0, 100)) {

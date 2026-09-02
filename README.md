@@ -16,7 +16,7 @@ This repository is the clean-room successor to the useful parts of Card Workshop
 - Requires `actor=human` for promotion.
 - Freezes exact promoted bytes in an immutable snapshot while allowing the working file to change afterward.
 - Keeps an append-only governance event log.
-- Loads Governance, History, Diff, Preflight, Trajectory, Moves, Execution state, and Statistics panels through the same plugin host.
+- Loads Governance, History, Diff, Preflight, Trajectory, Moves, and Execution state panels through the same plugin host.
 - Stores only run/span bindings for DeepSeek Harness provenance. DeepSeek's append-only session log remains the trace authority.
 
 ## V1 hardening on top of V0
@@ -35,7 +35,7 @@ kernel that owns only: workspace selection, the plugin manager, the slot
 renderer, plugin lifecycle (mount → dispose), the selected file/card, the
 active station, and the shared event bus + services. A fresh workspace with
 nothing enabled renders an empty frame: *Workspace — No views loaded — + Add
-plugin*. Everything with a name (tree, editor, diff, governance, statistics)
+plugin*. Everything with a name (tree, editor, diff, governance)
 arrives as a plugin.
 
 Three levels:

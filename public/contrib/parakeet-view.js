@@ -16,7 +16,7 @@ export function mount(el, ctx) {
     const listening = r.status?.listening === true;
     el.innerHTML = `
       <div class="card">
-        <h3>Parakeet STT ${chip(r)} <span class="muted" style="font-weight:normal">checked ${ctx.esc(String(r.checkedAt || '').slice(11, 19))}Z · <a href="#" data-role="refresh">refresh</a></span></h3>
+        <div>${chip(r)} <span class="muted">checked ${ctx.esc(String(r.checkedAt || '').slice(11, 19))}Z · <a href="#" data-role="refresh">refresh</a></span></div>
         <div class="keyval"><div class="key">URL</div><div class="mono muted">${ctx.esc(String(r.url || ''))}</div></div>
         ${Object.entries(cfg).map(([key, value]) => `
           <div class="keyval"><div class="key">${ctx.esc(key)}</div><div class="mono">${ctx.esc(String(value))}</div></div>`).join('')}

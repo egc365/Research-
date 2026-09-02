@@ -4,7 +4,7 @@
 export function mount(el, ctx) {
   let runId = '';
   el.innerHTML = `
-    <div class="card" style="max-width:640px"><h3>Execution state</h3>
+    <div class="card" style="max-width:640px">
       <div style="display:flex;gap:6px">
         <input data-role="run" placeholder="run id" style="flex:1">
         <button data-role="load">Load</button>

@@ -69,7 +69,6 @@ export function mountPathSticky(host, opts) {
 
   if (editing) {
     const box = document.createElement('div');
-    box.className = 'path-sticky-editor';
     styleSticky(box, note?.color || defaultColor);
     box.style.marginTop = '6px';
     isolateStickyPointer(box);
@@ -91,7 +90,6 @@ export function mountPathSticky(host, opts) {
 
   if (note) {
     const sticky = document.createElement('div');
-    sticky.className = 'path-sticky';
     styleSticky(sticky, note.color);
     sticky.style.marginTop = '6px';
     sticky.textContent = note.text;
@@ -105,7 +103,7 @@ export function mountPathSticky(host, opts) {
   const add = document.createElement('button');
   add.type = 'button';
   add.textContent = '＋ sticky';
-  add.className = 'muted path-sticky-add';
+  add.className = 'muted';
   add.style.cssText = 'margin-top:6px;font-size:11px;background:none;border:1px dashed #555;border-radius:4px;color:inherit;cursor:pointer;padding:1px 6px;opacity:.6';
   add.onclick = () => onBeginEdit();
   isolateStickyPointer(add);

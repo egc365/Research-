@@ -22,7 +22,7 @@ export async function mount(el, ctx) {
       <div data-role="menu-host"></div>`;
   el.innerHTML = ctx.station === 'sidebar'
     ? inner
-    : `<div class="card"><h3>Workspace</h3>${inner}</div>`;
+    : `<div class="card">${inner}</div>`;
   const tree = el.querySelector('[data-role="tree"]');
   let labels = {};
   let favorites = [];

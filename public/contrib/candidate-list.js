@@ -9,7 +9,7 @@ export function mount(el, ctx) {
   async function paint() {
     if (!ctx.workspace) { el.innerHTML = '<div class="empty">No workspace.</div>'; return; }
     const rows = await ctx.action('registry', 'list', { rootPath: ctx.workspace.root_path });
-    el.innerHTML = '<div class="card"><h3>Validation queue</h3><div data-role="list"></div></div>';
+    el.innerHTML = '<div class="card"><div data-role="list"></div></div>';
     const host = el.querySelector('[data-role="list"]');
     if (!rows.length) { host.innerHTML = '<div class="muted">Nothing registered yet — open or create a file to register it.</div>'; return; }
     for (const state of order) {

@@ -14,18 +14,17 @@ export function mount(el, ctx) {
       path: f.path, rootPath: ctx.workspace.root_path, preferBase: ctx.config.base || 'auto'
     });
     if (!doc.supported) {
-      el.innerHTML = `<div class="card"><h3>Diff</h3><div class="muted">${ctx.esc(doc.note)}</div></div>`;
+      el.innerHTML = `<div class="card"><div class="muted">${ctx.esc(doc.note)}</div></div>`;
       return;
     }
     if (!doc.hasBase) {
-      el.innerHTML = `<div class="card"><h3>Diff</h3><div class="muted">${ctx.esc(doc.base.from)} — the whole file counts as new.</div></div>`;
+      el.innerHTML = `<div class="card"><div class="muted">${ctx.esc(doc.base.from)} — the whole file counts as new.</div></div>`;
       return;
     }
     const rows = alignBlocks(doc.base.text, doc.working.text);
     const counts = { eq: 0, ins: 0, del: 0, chg: 0 };
     for (const row of rows) counts[row.op]++;
-    el.innerHTML = `<div class="card"><h3>Diff vs ${ctx.esc(doc.base.from)}</h3>
-      <div class="muted">${counts.eq} same · ${counts.ins} added · ${counts.del} removed · ${counts.chg} changed</div>
+    el.innerHTML = `<div class="card"><div class="muted">vs ${ctx.esc(doc.base.from)} · ${counts.eq} same · ${counts.ins} added · ${counts.del} removed · ${counts.chg} changed</div>
       <div data-role="rows"></div></div>`;
     const host = el.querySelector('[data-role="rows"]');
     for (const row of rows) {

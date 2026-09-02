@@ -5,11 +5,11 @@
 export function mount(el, ctx) {
   function paint() {
     if (!ctx.selection || !ctx.card) {
-      el.innerHTML = '<div class="card"><h3>Decision</h3><div class="muted">Pick a card to record a verdict on it.</div></div>';
+      el.innerHTML = '<div class="card"><div class="muted">Pick a card to record a verdict on it.</div></div>';
       return;
     }
     el.innerHTML = `
-      <div class="card"><h3>Decision — <span class="mono">${ctx.esc(ctx.card.slice(0, 24))}</span></h3>
+      <div class="card"><div class="muted mono">${ctx.esc(ctx.card.slice(0, 24))}</div>
         <div style="display:flex;gap:6px">
           <button data-role="accept" class="primary">Accept</button>
           <button data-role="needs">Needs more work</button>

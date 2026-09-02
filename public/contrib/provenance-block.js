@@ -5,9 +5,9 @@ export function mount(el, ctx) {
     const f = ctx.selection;
     if (!f) { el.innerHTML = '<div class="empty">Select a file to see where it came from.</div>'; return; }
     const artifact = await ctx.action('trajectory', 'current', { path: f.path });
-    if (!artifact) { el.innerHTML = '<div class="card"><h3>Provenance</h3><div class="muted">Not registered yet.</div></div>'; return; }
+    if (!artifact) { el.innerHTML = '<div class="card"><div class="muted">Not registered yet.</div></div>'; return; }
     el.innerHTML = `
-      <div class="card"><h3>Provenance</h3>
+      <div class="card">
         <div class="keyval"><div class="key">Path</div><div class="mono">${ctx.esc(artifact.path)}</div></div>
         <div class="keyval"><div class="key">State</div><div><span class="badge ${ctx.esc(artifact.state)}">${ctx.esc(artifact.state)}</span></div></div>
         <div class="keyval"><div class="key">SHA-256</div><div class="mono">${ctx.esc(artifact.checksum || '—')}</div></div>

@@ -1,6 +1,6 @@
 // The composition catalog: every station and contribution the app ships, plus
 // the default wiring between them. This file is the *declaration*; SQLite is
-// the *crosswalk* — boot upserts these rows into ui_plugins (preserving the
+// the *crosswalk*. Boot upserts these rows into ui_plugins (preserving the
 // owner's enabled flags) and seeds station_contributions only for stations
 // that have no wiring rows yet, so owner edits always survive a restart.
 //
@@ -11,7 +11,7 @@
 //
 // Layouts the kernel knows: 'main', 'rail-main', 'main-side', 'rail-main-side'.
 
-// Stations carry a `category` — the nav bar's functional delineation (owner
+// Stations carry a `category`, the nav bar's functional delineation (owner
 // rule 2026-09-02: plugins grouped by function, not a flat board of tabs).
 // Curate = the interrelated revision/validation/review family, Monitor =
 // read-only windows onto running machinery. Board is the ungrouped frame.
@@ -163,8 +163,8 @@ export const defaultWiring = {
 export const retired = ['label-designator', 'governance-center', 'file-workbench', 'planning-board', 'project-creator', 'statistics-view'];
 
 // One-shot wiring additions for stations that already have owner rows (the
-// seeder deliberately skips those). Each id is applied at most once ever —
-// recorded in app_meta — so an owner who later unwires the contribution is
+// seeder deliberately skips those). Each id is applied at most once ever,
+// recorded in app_meta, so an owner who later unwires the contribution is
 // never fought with.
 export const wiringAdditions = [
   { id: '20260902-board-on-dashboard', stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'board-view', sortOrder: 15 },
@@ -174,8 +174,8 @@ export const wiringAdditions = [
 ];
 
 // One-shot wiring removals for stations that already have owner rows (the
-// seeder deliberately skips those). Each id is applied at most once ever —
-// recorded in app_meta — so an owner who later re-adds the contribution is
+// seeder deliberately skips those). Each id is applied at most once ever,
+// recorded in app_meta, so an owner who later re-adds the contribution is
 // never fought with.
 export const wiringRemovals = [
   { id: '20260902-folder-cards-off-dashboard', stationId: 'dashboard-viewer', slotName: 'main', contributionId: 'folder-cards' },
@@ -185,7 +185,7 @@ export const wiringRemovals = [
 
 // One-shot station enables. Workspaces that had planning-board enabled
 // get dashboard-viewer so an owner-enabled Board survives retirement.
-// Each id runs at most once ever — recorded in app_meta. Must run before
+// Each id runs at most once ever, recorded in app_meta. Must run before
 // retirePlugins, while the old rows still exist.
 export const stationEnables = [
   {
@@ -213,7 +213,7 @@ export function catalogRows(serverPlugins = []) {
   }
   for (const p of serverPlugins) {
     // A server plugin and a station may share a name (revision-center vs the
-    // 'diff' service etc.) — ids here are the plugin's own; collisions throw.
+    // 'diff' service etc.). ids here are the plugin's own; collisions throw.
     if (rows.some(r => r.plugin_id === p.id)) throw new Error(`Catalog id collision: ${p.id}`);
     rows.push({ plugin_id: p.id, plugin_kind: 'service', label: p.label || p.id, version: '1.0.0',
       client_entry: null, server_entry: `plugins/server/${p.id}.mjs`,

@@ -98,9 +98,9 @@ export function mount(el, ctx) {
     if (disposed) return;
     el.innerHTML = `
       <div class="card">
-        <h3>GPU governor <span class="muted" style="font-weight:normal">checked ${ctx.esc(status.checkedAt.slice(11, 19))}Z ·
+        <div class="muted">checked ${ctx.esc(status.checkedAt.slice(11, 19))}Z ·
           <a href="#" data-role="refresh">refresh</a> ·
-          <a href="${ctx.esc(status.dashboardUrl)}" target="_blank" rel="noopener">open :7890 dashboard</a></span></h3>
+          <a href="${ctx.esc(status.dashboardUrl)}" target="_blank" rel="noopener">open :7890 dashboard</a></div>
         <div class="muted">Read-only window onto the governor daemon. STOP / pause controls live on the :7890 dashboard.</div>
       </div>
       ${snapshotCard(status)}

@@ -21,7 +21,7 @@ export function mount(el, ctx) {
     // offer only stations that exist and are enabled.
     const enabled = ctx.enabledStationIds ? ctx.enabledStationIds() : null;
     const openIn = (ctx.config.openIn || []).filter(id => !enabled || enabled.includes(id));
-    el.innerHTML = `<div class="card"><h3>Lifecycle</h3>
+    el.innerHTML = `<div class="card">
       <div><span class="badge ${ctx.esc(state)}">${ctx.esc(state)}</span></div>
       <div class="muted" style="margin-top:6px">Can become: ${(transitions[state] || []).join(', ') || 'nothing — terminal state'}</div>
       ${openIn.length ? '<div data-role="open" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"></div>' : ''}

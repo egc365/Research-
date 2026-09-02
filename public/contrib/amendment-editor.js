@@ -11,9 +11,9 @@ export function mount(el, ctx) {
 
   function paint() {
     if (!ctx.selection) { el.innerHTML = '<div class="empty">Select a file, then a card.</div>'; return; }
-    if (!ctx.card) { el.innerHTML = '<div class="card"><h3>Amendment</h3><div class="muted">Pick a card to amend it.</div></div>'; return; }
+    if (!ctx.card) { el.innerHTML = '<div class="card"><div class="muted">Pick a card to amend it.</div></div>'; return; }
     el.innerHTML = `
-      <div class="card"><h3>Amendment — <span class="mono">${ctx.esc(ctx.card.slice(0, 24))}</span></h3>
+      <div class="card"><div class="muted mono">${ctx.esc(ctx.card.slice(0, 24))}</div>
         <textarea data-role="body" rows="6" style="width:100%" placeholder="Amended text for this card…"></textarea>
         <input data-role="note" style="width:100%;margin-top:6px" placeholder="Reason for this amendment (kept in the revision log)">
         <div style="display:flex;gap:6px;margin-top:8px">
