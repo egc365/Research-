@@ -10,7 +10,10 @@ import { alignBlocks, renderBlock } from '/contrib/lib/blocks.js';
 
 export function mount(el, ctx) {
   let doc = null;       // revision service 'open' payload
+  // The diff reads split (Preserved | New) or unified — owner's choice, and
+  // the choice sticks per browser.
   let mode = 'dual';
+  try { if (localStorage.getItem('ro.diffMode') === 'unified') mode = 'unified'; } catch { /* storage may be unavailable */ }
   let sessions = [];    // transcript sessions for this path
   let sessionNote = null;
   let session = null;   // picked session id
@@ -45,6 +48,7 @@ export function mount(el, ctx) {
   function header() {
     return `<div class="dual-tabs">
       <button data-mode="dual" class="${mode === 'dual' ? 'active' : ''}">Preserved | New</button>
+      <button data-mode="unified" class="${mode === 'unified' ? 'active' : ''}">Unified</button>
       <button data-mode="original" class="${mode === 'original' ? 'active' : ''}">Original document</button>
       <button data-mode="transcript" class="${mode === 'transcript' ? 'active' : ''}">Session transcript</button>
     </div>`;
@@ -127,6 +131,29 @@ export function mount(el, ctx) {
     }
   }
 
+  // One column, changes in reading order: a changed block shows its removed
+  // text then its added text — the same rows the split view aligns.
+  function paintUnified(host) {
+    const rows = alignBlocks(doc.base.text, doc.working.text);
+    const counts = { eq: 0, ins: 0, del: 0, chg: 0 };
+    for (const row of rows) counts[row.op]++;
+    let out = '';
+    for (const row of rows) {
+      if (row.op === 'chg') {
+        out += `<div class="blk del">${renderBlock(row.left)}</div><div class="blk ins">${renderBlock(row.right)}</div>`;
+      } else if (row.op === 'del') {
+        out += `<div class="blk del">${renderBlock(row.left)}</div>`;
+      } else {
+        out += `<div class="blk ${row.op === 'ins' ? 'ins' : ''}">${renderBlock(row.right)}</div>`;
+      }
+    }
+    host.innerHTML = `
+      <div class="muted" style="margin-bottom:6px">blocks: ${counts.eq} same, ${counts.ins} added, ${counts.del} removed, ${counts.chg} changed</div>
+      <div class="pane-label"><span>UNIFIED — ${escape(doc.base.from)} → ${escape(doc.working.from)}</span>
+        <span class="mono">${escape(doc.working.sha256.slice(0, 12))}</span></div>
+      <div class="doc-col">${out || '<div class="empty">Both sides are empty.</div>'}</div>`;
+  }
+
   function paintOriginal(host) {
     if (!doc.hasBase) {
       host.innerHTML = `<div class="empty">There is no preserved version of this file on its own — ${escape(doc.base.from)}.</div>`;
@@ -166,9 +193,16 @@ export function mount(el, ctx) {
       return;
     }
     el.innerHTML = header() + '<div data-role="pane"></div>';
-    el.querySelectorAll('[data-mode]').forEach(button => button.onclick = () => { mode = button.dataset.mode; paint(); });
+    el.querySelectorAll('[data-mode]').forEach(button => button.onclick = () => {
+      mode = button.dataset.mode;
+      if (mode === 'dual' || mode === 'unified') {
+        try { localStorage.setItem('ro.diffMode', mode); } catch { /* storage may be unavailable */ }
+      }
+      paint();
+    });
     const pane = el.querySelector('[data-role="pane"]');
     if (mode === 'dual') paintDual(pane);
+    else if (mode === 'unified') paintUnified(pane);
     else if (mode === 'original') paintOriginal(pane);
     else paintTranscript(pane);
   }
