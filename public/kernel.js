@@ -863,8 +863,37 @@ function mountPaneResizer(slotEls) {
 
 // `path` opens the station on that board surface (Save to project lands on
 // its new folder); without it the surface is whatever the kernel holds.
-async function activateStation(stationId, { path } = {}) {
+// `root` switches workspace first (Inbox rows from another workspace) so
+// switch and activation are one navigation; `file` selects that artifact
+// before the station paints.
+async function activateStation(stationId, { path, root, file } = {}) {
   if (navigationBlocked()) return;
+  const fromWs = kernel.workspace?.root_path || null;
+  const fromStation = kernel.activeStation;
+
+  if (root && root !== kernel.workspace?.root_path) {
+    kernel.boardPath = [];
+    const prevSkip = skipHistory;
+    skipHistory = true;
+    try {
+      await loadWorkspaces(root, { restoreMemory: false, station: stationId });
+    } finally {
+      skipHistory = prevSkip;
+    }
+  }
+
+  let enabledNow = false;
+  if (root != null && kernel.workspace && !enabledStations().some(row => row.plugin_id === stationId)) {
+    const prevSkip = skipHistory;
+    skipHistory = true;
+    try {
+      await togglePlugin(stationId, true);
+    } finally {
+      skipHistory = prevSkip;
+    }
+    enabledNow = true;
+  }
+
   // Guard before tearing anything down: a target station that is not enabled
   // for this workspace must not blank the current view ("Open in X" buttons).
   const station = enabledStations().find(row => row.plugin_id === stationId);
@@ -873,10 +902,30 @@ async function activateStation(stationId, { path } = {}) {
     if (kernel.activeStation) return;
     return renderEmptyFrame();
   }
-  const previous = kernel.activeStation;
+
+  if (file) {
+    const prevSkip = skipHistory;
+    skipHistory = true;
+    try {
+      await selectFile(file);
+    } finally {
+      skipHistory = prevSkip;
+    }
+  }
+
+  if (Array.isArray(path)) kernel.boardPath = path.map(String);
+
+  const switched = Boolean(root && root !== fromWs);
+  const alreadyOn = kernel.activeStation === stationId;
+  if (switched && alreadyOn) {
+    if (kernel.workspace) uiMemory.patch(s => { (s.station ??= {})[kernel.workspace.root_path] = stationId; });
+    renderStationBar();
+    if (!skipHistory) commitHistory('push');
+    return;
+  }
+
   disposeMounts();
   kernel.activeStation = stationId;
-  if (Array.isArray(path)) kernel.boardPath = path.map(String);
   if (kernel.workspace) uiMemory.patch(s => { (s.station ??= {})[kernel.workspace.root_path] = stationId; });
   renderStationBar();
   const layout = station.manifest.layout || 'main';
@@ -964,7 +1013,12 @@ async function activateStation(stationId, { path } = {}) {
     if (!el.children.length) el.innerHTML = `<div class="empty">Empty slot: ${esc(name)}. Wire a contribution in Plugins ⚙.</div>`;
   }
   if (stationId === HOME_STATION && slotEls.main) mountBoardFrameChrome(slotEls.main);
-  if (!skipHistory && previous !== stationId) commitHistory('push');
+  if (!skipHistory) {
+    const moved = switched || stationId !== fromStation;
+    if (moved) commitHistory('push');
+    else if (file) commitHistory('replace');
+  }
+  if (enabledNow) notify(`Enabled ${stationId} for this workspace.`, 'ok');
 }
 
 function mountBoardFrameChrome(slotMain) {
