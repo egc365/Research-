@@ -12,6 +12,9 @@ const APPEARANCES = ['card', 'sticky', 'icon'];
 // The named icons draw as symbols; a one-character icon draws as itself.
 const GLYPHS = { file: '📄', folder: '📁', note: '📝', link: '🔗', image: '🖼' };
 const CONTROLS = '.text, .body, .fields, .tags, .flip, .icon, .open, .board-card-palette';
+// The card face previews this many lines of a file; the stylesheet caps the
+// body at the same count of visual lines and scrolls the rest (.board-card .body).
+const PREVIEW_LINES = 12;
 
 export async function mount(el, ctx) {
   const which = String(ctx.config.view || '');
@@ -90,7 +93,7 @@ export async function mount(el, ctx) {
     previews.set(card.path, '');
     ctx.request(`/api/file?root=${encodeURIComponent(root())}&path=${encodeURIComponent(card.path)}`)
       .then(rec => {
-        const text = String(rec.content || '').split('\n').slice(0, 8).join('\n');
+        const text = String(rec.content || '').split('\n').slice(0, PREVIEW_LINES).join('\n');
         previews.set(card.path, text);
         const body = el.querySelector(`.board-card[data-card-id="${CSS.escape(String(card.id))}"] .body`);
         if (body && !body.querySelector('textarea')) body.textContent = text;
@@ -238,7 +241,8 @@ export async function mount(el, ctx) {
   }
 
   // The sticky text. Empty text shows the title dimmed so a card is never a
-  // bare kind word; the editor still opens on the empty note.
+  // bare kind word (a folder, whose name line is drawn above, shows "note");
+  // the editor still opens on the empty note.
   function textEl(card) {
     const body = document.createElement('div');
     body.className = 'text';
@@ -263,7 +267,7 @@ export async function mount(el, ctx) {
       body.appendChild(area);
       return body;
     }
-    body.textContent = card.text || card.title;
+    body.textContent = card.text || (card.kind === 'folder' ? 'note' : card.title);
     if (!card.text) body.classList.add('placeholder');
     if (source.text) {
       body.onclick = () => { source.stopEditing?.(); stopEditing(); editingId = card.id; paint(); };
@@ -307,6 +311,12 @@ export async function mount(el, ctx) {
       }
     };
     mountPalette();
+    wrap.addEventListener('keydown', e => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      wrap.closest('.board-card')?.focus();
+    });
     return wrap;
   }
 
@@ -404,7 +414,13 @@ export async function mount(el, ctx) {
       const inner = document.createDocumentFragment();
       const icon = iconEl(card);
       if (card.missing) icon.append(' ', badge('missing', 'missing'));
-      inner.append(icon, textEl(card));
+      if (card.kind === 'folder') {
+        const head = div('display:flex;gap:6px;align-items:baseline');
+        head.append(icon, titleEl(card));
+        inner.append(head, textEl(card));
+      } else {
+        inner.append(icon, textEl(card));
+      }
       if (card.image) inner.appendChild(imageEl(card));
       if (card.kind === 'folder' && source.open) inner.appendChild(openEl(card));
       inner.appendChild(flipEl(card, 'sticky'));
@@ -463,7 +479,23 @@ export async function mount(el, ctx) {
       });
     }
     c.appendChild(FACES[face](card));
+    if (c.querySelector('.board-card-palette')) c.tabIndex = 0;
     return c;
+  }
+
+  // Keyboard focus outlives a repaint: the same card, or the same palette
+  // dot on it, takes it back.
+  function focused() {
+    const a = document.activeElement;
+    const card = a && el.contains(a) ? a.closest('.board-card') : null;
+    if (!card) return null;
+    return { id: card.dataset.cardId, dot: a.matches('.board-card-palette button') ? a.getAttribute('aria-label') : null };
+  }
+  function refocus({ id, dot }) {
+    const card = el.querySelector(`.board-card[data-card-id="${CSS.escape(id)}"]`);
+    if (!card) return;
+    const target = dot ? card.querySelector(`.board-card-palette button[aria-label="${CSS.escape(dot)}"]`) : null;
+    (target || card).focus();
   }
 
   function chipsEl(chips) {
@@ -506,11 +538,13 @@ export async function mount(el, ctx) {
 
   function paint() {
     if (disposed) return;
+    const had = focused();
     el.innerHTML = '';
     if (!root()) { el.appendChild(div('opacity:.6;padding:8px', 'No workspace.')); return; }
     if (source.paint) source.paint(el, cardEl); else paintGroups();
     const area = el.querySelector('.board-card textarea');
     if (area) queueMicrotask(() => area.focus());
+    else if (had) refocus(had);
   }
 
   function repaint() {

@@ -390,11 +390,11 @@ async function saveSketch(db, ctx, dest, model) {
       }
       ref = await writeNewFile({ ...ctx, rel: childRel(surface, name), content });
       if (title == null) title = name;
-      // The sticky text typed on the sketch becomes the file's sticky note.
-      const text = String(card.text || '').trim();
-      if (kind === 'file' && text) {
-        await stickies.action({ action: 'set', payload: { rootPath: ctx.rootPath, path: ref, text, color }, surface: 'owner' });
-      }
+    }
+    // The sticky text typed on a file or folder of the sketch becomes its sticky note.
+    const text = String(card.text || '').trim();
+    if ((kind === 'file' || kind === 'folder') && text) {
+      await stickies.action({ action: 'set', payload: { rootPath: ctx.rootPath, path: ref, text, color }, surface: 'owner' });
     }
     insertCard(db, {
       surface, laneId, kind: rowKind, ref, title, color,
@@ -489,14 +489,17 @@ export const plugin = {
       return lane.run_id == null ? null : laneRun(mustStore(store), lane);
     }
 
-    // The lane row and the state row are written together: the run id lands
-    // on the lane only if the state seeded.
+    // One-way guarantee across two databases: the run id lands on the lane
+    // only if the state seeded (the lane update is rolled back when
+    // initExecutionState throws). A COMMIT that fails after the seed leaves a
+    // state row in control.sqlite3 that no lane names.
     if (action === 'run-lane') {
       const lane = laneOn(db, Number(payload.laneId), surface);
       const exec = mustStore(store);
       if (lane.run_id != null) return { ...laneRun(exec, lane), created: false };
       const runId = `${lane.slug || 'lane'}-${crypto.randomBytes(4).toString('hex')}`;
       const steps = planSteps(laneNode(tree(db, surface).lanes, lane.lane_id));
+      if (!steps.length) throw fail('BOARD_BAD_INPUT', 'Nothing to run: the lane has no cards');
       db.exec('BEGIN');
       try {
         db.prepare('UPDATE board_lanes SET run_id=? WHERE lane_id=?').run(runId, lane.lane_id);

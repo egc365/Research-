@@ -1,7 +1,8 @@
 // Contribution: inspect and patch a run's structured state (SKILL.state).
 // Patches merge with null-deletion semantics under an optimistic version
 // check; an invalid patch changes nothing. Opened on a run (ctx.run, a
-// lane's counter on the board) it loads that run at once.
+// lane's counter on the board) it loads that run at once; a run loaded by
+// hand is written into the URL in place, so a bookmark lands on it.
 export function mount(el, ctx) {
   let runId = '';
   el.innerHTML = `
@@ -25,6 +26,7 @@ export function mount(el, ctx) {
   async function load() {
     runId = el.querySelector('[data-role="run"]').value.trim();
     if (!runId) return;
+    if (runId !== ctx.run) ctx.setRun(runId);
     const record = await ctx.action('execution', 'get', { runId });
     if (!record) { stateEl.textContent = 'No state for this run.'; currentVersion = null; versionEl.textContent = ''; return; }
     stateEl.textContent = JSON.stringify(record.state, null, 2);

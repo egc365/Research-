@@ -26,16 +26,23 @@ test('the palette is red yellow green first, then cyan purple orange, pink kept'
   globalThis.document = {
     createElement() {
       const kids = [];
+      const attrs = {};
       return {
         style: { cssText: '' },
         children: kids,
-        appendChild(el) { kids.push(el); return el; }
+        attrs,
+        appendChild(el) { kids.push(el); return el; },
+        setAttribute(k, v) { attrs[k] = v; },
+        addEventListener() {}
       };
     }
   };
   try {
     const row = paletteEl(null, () => {});
     assert.deepEqual(row.children.map(d => d.title), ['red', 'yellow', 'green', 'cyan', 'purple', 'orange', 'pink']);
+    assert.deepEqual(row.children.map(d => d.attrs['aria-label']), row.children.map(d => d.title), 'each dot names its color');
+    assert.deepEqual(row.children.map(d => d.tabIndex), [0, -1, -1, -1, -1, -1, -1], 'one tab stop, the first dot when no color is current');
+    assert.deepEqual(paletteEl(STICKY_COLORS[2], () => {}).children.map(d => d.tabIndex), [-1, -1, 0, -1, -1, -1, -1], 'the current color is the tab stop');
   } finally {
     globalThis.document = prev;
   }

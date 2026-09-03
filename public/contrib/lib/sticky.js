@@ -23,20 +23,38 @@ export function styleSticky(el, color) {
 }
 
 // A row of palette dots; clicking one reports the color. Clicking the dot of
-// the current color reports null (clear back to default).
+// the current color reports null (clear back to default). From the keyboard
+// the row is one tab stop (the current color's dot, else the first), the
+// arrow keys walk the dots, and Enter or Space is the button's own click.
 export function paletteEl(current, onPick) {
   const row = document.createElement('div');
   row.style.cssText = 'display:flex;gap:4px;padding:2px 0';
-  for (let i = 0; i < STICKY_COLORS.length; i++) {
-    const color = STICKY_COLORS[i];
+  row.setAttribute('role', 'group');
+  row.setAttribute('aria-label', 'Color');
+  const home = Math.max(0, STICKY_COLORS.indexOf(current));
+  const dots = STICKY_COLORS.map((color, i) => {
     const dot = document.createElement('button');
     dot.type = 'button';
     dot.title = STICKY_TITLES[i];
+    dot.setAttribute('aria-label', STICKY_TITLES[i]);
+    dot.setAttribute('aria-pressed', color === current ? 'true' : 'false');
+    dot.tabIndex = i === home ? 0 : -1;
     dot.style.cssText = `width:14px;height:14px;border-radius:50%;cursor:pointer;padding:0;background:${color};` +
       `border:${color === current ? '2px solid #222' : '1px solid rgba(0,0,0,.35)'}`;
     dot.onclick = e => { e.stopPropagation(); onPick(color === current ? null : color); };
     row.appendChild(dot);
-  }
+    return dot;
+  });
+  row.addEventListener('keydown', e => {
+    const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
+    const at = dots.indexOf(document.activeElement);
+    if (!step || at < 0) return;
+    e.preventDefault();
+    const next = dots[(at + step + dots.length) % dots.length];
+    dots[at].tabIndex = -1;
+    next.tabIndex = 0;
+    next.focus();
+  });
   return row;
 }
 

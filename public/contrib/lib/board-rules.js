@@ -207,6 +207,14 @@ export function parseLaneWidth(raw) {
   return w;
 }
 
+// A width the owner typed or dragged, held to the same bounds. Empty or not a
+// number means the stylesheet width (null), so the server is never asked to refuse it.
+export function clampLaneWidth(raw) {
+  const n = Number(raw);
+  if (raw == null || raw === '' || !Number.isFinite(n)) return null;
+  return Math.min(LANE_MAX_W, Math.max(LANE_MIN_W, Math.round(n)));
+}
+
 export function viewCard(row) {
   if (!row) return row;
   return {

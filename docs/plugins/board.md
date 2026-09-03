@@ -29,8 +29,9 @@ A lane runs. `run-lane { surface, laneId }` seeds an execution-state run
 (service `execution`, control.sqlite3) whose state is the lane's plan:
 `{ board: { surface, lane: <slug> }, steps: [{ card, kind, status }...], step }`,
 the lane's own cards first, then each child lane's cards depth-first, in
-canvas order. The lane row keeps only the run id; `lane-run-state { surface,
-laneId }` reads `{ runId, step, total }` from the state for the header
-counter, and the counter opens the Execution state station on that run
+canvas order. A lane with no cards refuses to run (`Nothing to run`). The lane
+row keeps only the run id; `lane-run-state { surface, laneId }` reads
+`{ laneId, runId, step, total }` from the state for the header counter, and the
+counter opens the Execution state station on that run
 (`activateStation('execution-state', { run })`, carried in the URL as `run=`).
 A second `run-lane` returns the existing run. The whiteboard refuses both.

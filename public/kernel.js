@@ -259,6 +259,8 @@ function makeContext(stationId, config, wiringRows = null, loc = {}) {
     get selection() { return kernel.selection; },
     get card() { return kernel.card; },
     setCard(cardId) { kernel.card = cardId; bus.emit('card', cardId); },
+    // A station that loads another run by hand writes it into the URL (run=) in place.
+    setRun(runId) { kernel.run = runId ? String(runId) : null; commitHistory('replace'); },
     station: stationId,
     config: config || {},
     request,
@@ -882,6 +884,7 @@ async function activateStation(stationId, { path, run } = {}) {
     return renderEmptyFrame();
   }
   const previous = kernel.activeStation;
+  const previousRun = kernel.run;
   disposeMounts();
   kernel.activeStation = stationId;
   if (Array.isArray(path)) kernel.boardPath = path.map(String);
@@ -973,7 +976,7 @@ async function activateStation(stationId, { path, run } = {}) {
     if (!el.children.length) el.innerHTML = `<div class="empty">Empty slot: ${esc(name)}. Wire a contribution in Plugins ⚙.</div>`;
   }
   if (stationId === HOME_STATION && slotEls.main) mountBoardFrameChrome(slotEls.main);
-  if (!skipHistory && previous !== stationId) commitHistory('push');
+  if (!skipHistory && (previous !== stationId || previousRun !== kernel.run)) commitHistory('push');
 }
 
 function mountBoardFrameChrome(slotMain) {
@@ -1017,7 +1020,7 @@ async function openProjectDialog() {
   projectDialog.showModal();
 }
 
-async function recompose(keepStation = true, preferStation = null) {
+async function recompose(keepStation = true, preferStation = null, run = null) {
   disposeMounts();
   await loadComposition();
   if (workspaceMissing()) {
@@ -1039,7 +1042,7 @@ async function recompose(keepStation = true, preferStation = null) {
     : pick(remembered) ? remembered
     : pick(HOME_STATION) ? HOME_STATION
     : available[0].plugin_id;
-  await activateStation(target);
+  await activateStation(target, { run });
 }
 
 // ------------------------------------------------------------------ sidebar
@@ -1131,7 +1134,7 @@ $('sidebarPlugins').onclick = () => openPluginManager();
 
 // ---------------------------------------------------------------- workspaces
 
-async function loadWorkspaces(selectPath = null, { restoreMemory = true, station = null } = {}) {
+async function loadWorkspaces(selectPath = null, { restoreMemory = true, station = null, run = null } = {}) {
   const pushAfter = !skipHistory;
   if (pushAfter) kernel.boardPath = [];
   const prevSkip = skipHistory;
@@ -1155,7 +1158,7 @@ async function loadWorkspaces(selectPath = null, { restoreMemory = true, station
     kernel.card = null;
     bus.emit('workspace', kernel.workspace);
     await loadPrefs().catch(showError);
-    await recompose(false, station);
+    await recompose(false, station, run);
     await renderSidebar().catch(showError);
     if (restoreMemory) {
       const rememberedFile = kernel.workspace ? uiMemory.read().selection?.[kernel.workspace.root_path] : null;
@@ -1563,8 +1566,8 @@ async function applyState(state) {
     kernel.boardPath = Array.isArray(state.path) ? state.path.map(String) : [];
     const wantWs = state.ws || null;
     const haveWs = kernel.workspace?.root_path || null;
-    if (wantWs !== haveWs) await loadWorkspaces(wantWs, { restoreMemory: false, station: state.station });
-    if (state.station && state.station !== kernel.activeStation || (state.run || null) !== kernel.run) {
+    if (wantWs !== haveWs) await loadWorkspaces(wantWs, { restoreMemory: false, station: state.station, run: state.run });
+    if ((state.station && state.station !== kernel.activeStation) || (state.run || null) !== kernel.run) {
       await activateStation(state.station || kernel.activeStation, { run: state.run });
     } else {
       bus.emit('board-path', { path: kernel.boardPath, source: 'history' });
@@ -1594,9 +1597,10 @@ async function boot() {
   skipHistory = true;
   try {
     kernel.boardPath = state.path || [];
-    await loadWorkspaces(state.ws, { restoreMemory: !fromUrl, station: fromUrl ? state.station : null });
+    // The URL's station and run reach recompose, so a run URL mounts its station once.
+    await loadWorkspaces(state.ws, { restoreMemory: !fromUrl, station: fromUrl ? state.station : null, run: fromUrl ? state.run : null });
     if (fromUrl) {
-      if (state.station && state.station !== kernel.activeStation || state.run) await activateStation(state.station || kernel.activeStation, { run: state.run });
+      if (state.station && state.station !== kernel.activeStation) await activateStation(state.station, { run: state.run });
       else bus.emit('board-path', { path: kernel.boardPath, source: 'history' });
       if (state.file && kernel.workspace) {
         const abs = state.file.startsWith('/') ? state.file : `${kernel.workspace.root_path}/${state.file}`;

@@ -16,7 +16,7 @@
 // Execution state station on that run. Nothing on the whiteboard runs.
 import { styleSticky, paletteEl, stickyKey, isolateStickyPointer, colorForLabel, DEFAULT_STICKY_COLOR } from '../lib/sticky.js';
 import { boardStore } from '../lib/board-store.js';
-import { MAX_DEPTH, LANE_GAP, LANE_MIN_W, LANE_MAX_W, landingSpot } from '../lib/board-rules.js';
+import { MAX_DEPTH, LANE_GAP, LANE_W, LANE_MIN_W, LANE_MAX_W, landingSpot, clampLaneWidth } from '../lib/board-rules.js';
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg)$/i;
 const CARD_MIME = 'x-ro-card';
@@ -39,6 +39,7 @@ export function open(ctx, config, view) {
   let dragGrab = { dx: 0, dy: 0 }; // where inside its box the dragged lane was picked up
   let runs = {}; // lane_id -> { runId, step, total } for the lanes with a run, read at load
   let canvas = null;
+  let floorWatch = null; // ResizeObserver over the top-level tiles; re-places the floor when one grows
 
   const root = () => ctx.workspace?.root_path;
   const access = boardStore(ctx, config);
@@ -113,10 +114,10 @@ export function open(ctx, config, view) {
     return 'note';
   }
 
+  // A file or folder card's sticky text is its sticky note (its memory row on the whiteboard).
   function stickyText(row) {
     if (row.kind === 'image') return row.title || '';
-    if (row.kind === 'folder') return title(row);
-    if (row.kind === 'file') {
+    if (isPathKind(row)) {
       if (isWhiteboard) return row.text || '';
       return stickies.notes?.[stickyKey(root(), row.ref)]?.text || '';
     }
@@ -196,18 +197,12 @@ export function open(ctx, config, view) {
     }
   }
 
-  // The sticky editor saved: a folder renames, a file writes its sticky note
-  // (or its memory row on the whiteboard, ADR-023), a note or link updates.
+  // The sticky editor saved: a file or folder writes its sticky note (or its
+  // memory row on the whiteboard, ADR-023), a note or link updates.
   function text(card, value, colorPick) {
     const patch = { cardId: card.id };
     if (colorPick !== undefined) patch.color = colorPick;
-    if (card.kind === 'folder') {
-      const v = String(value || '').trim();
-      if (v && v !== card.title) patch.name = v;
-      if (patch.color === undefined && patch.name === undefined) return;
-      return call('update-card', patch);
-    }
-    if (card.kind === 'file') {
+    if (isPathKind(card)) {
       if (isWhiteboard) { patch.text = value; return call('update-card', patch); }
       const writes = [];
       if (colorPick !== undefined) writes.push(call('update-card', patch));
@@ -501,17 +496,28 @@ export function open(ctx, config, view) {
     input.type = 'text';
     input.className = 'board-lane-name';
     input.placeholder = 'lane name';
+    form.appendChild(input);
+    // A top-level lane can be given its width here; a nested lane flows in its parent.
+    const width = document.createElement('input');
+    if (!parentLane) {
+      width.type = 'number';
+      width.className = 'board-lane-width';
+      width.placeholder = String(LANE_W);
+      width.title = `Width in pixels, ${LANE_MIN_W} to ${LANE_MAX_W}; empty means ${LANE_W}`;
+      form.appendChild(width);
+    }
     const submit = document.createElement('button');
     submit.type = 'submit';
     submit.textContent = 'Add lane';
-    form.append(input, submit);
+    form.appendChild(submit);
     form.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); namingLane = null; view.paint(); } });
     form.addEventListener('submit', e => {
       e.preventDefault();
       const name = input.value.trim();
       if (!name) { ctx.notify('A lane needs a name', 'error'); return; }
       namingLane = null;
-      mutate('add-lane', { parentLaneId: parentLane ? parentLane.lane_id : null, name, ...(parentLane ? {} : landing()) });
+      const w = clampLaneWidth(width.value);
+      mutate('add-lane', { parentLaneId: parentLane ? parentLane.lane_id : null, name, ...(parentLane ? {} : { ...landing(), ...(w == null ? {} : { w }) }) });
     });
     return form;
   }
@@ -538,26 +544,31 @@ export function open(ctx, config, view) {
       input.onblur = () => { if (renamingLaneId === lane.lane_id && input.isConnected) save(); };
       h.appendChild(input);
     } else {
-      const name = div('font-weight:600;flex:1', lane.name);
+      // One line, ellipsis when long, the whole name on hover; the controls
+      // wrap as one group under it instead of squeezing the title.
+      const name = div('', lane.name);
       name.className = 'board-lane-title';
-      name.title = 'Drag to move the lane';
+      name.title = lane.name;
       h.appendChild(name);
     }
-    h.appendChild(btn('✎', 'Rename lane', e => {
+    const controls = div('');
+    controls.className = 'board-lane-controls';
+    controls.appendChild(btn('✎', 'Rename lane', e => {
       e.stopPropagation();
       stopEditing();
       view.stopEditing();
       renamingLaneId = lane.lane_id;
       view.paint();
     }));
-    h.appendChild(btn('＋', 'Add a file, folder, link, or note to this lane', () => openAdd(lane)));
-    if (depth < MAX_DEPTH) h.appendChild(btn('＋ lane', 'Add a lane inside this lane', () => openNameLane(lane)));
-    if (!isWhiteboard) h.appendChild(runBtn(lane));
-    h.appendChild(btn(`⇄ ${lane.orientation}`, `Orientation: ${lane.orientation} (toggle)`, e => {
+    controls.appendChild(btn('＋', 'Add a file, folder, link, or note to this lane', () => openAdd(lane)));
+    if (depth < MAX_DEPTH) controls.appendChild(btn('＋ lane', 'Add a lane inside this lane', () => openNameLane(lane)));
+    if (!isWhiteboard) controls.appendChild(runBtn(lane));
+    controls.appendChild(btn(`⇄ ${lane.orientation}`, `Orientation: ${lane.orientation} (toggle)`, e => {
       e.stopPropagation();
       mutate('set-orientation', { laneId: lane.lane_id, orientation: lane.orientation === 'vertical' ? 'horizontal' : 'vertical' });
     }));
-    h.appendChild(laneRemoveBtn(lane));
+    controls.appendChild(laneRemoveBtn(lane));
+    h.appendChild(controls);
     return h;
   }
 
@@ -635,7 +646,7 @@ export function open(ctx, config, view) {
       const startX = e.clientX;
       const startW = tile.offsetWidth;
       let w = startW;
-      const move = ev => { w = Math.min(LANE_MAX_W, Math.max(LANE_MIN_W, Math.round(startW + ev.clientX - startX))); tile.style.width = `${w}px`; };
+      const move = ev => { w = clampLaneWidth(startW + ev.clientX - startX); tile.style.width = `${w}px`; };
       const up = () => {
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', up);
@@ -665,7 +676,8 @@ export function open(ctx, config, view) {
   }
 
   // The floor is one strip under the lowest lane, as wide as the canvas
-  // extent; measured after the lanes are in the DOM.
+  // extent; measured after the lanes are in the DOM and again whenever a
+  // tile's box changes (a preview or image landing, a flip, the resize edge).
   function placeFloor(floor) {
     let bottom = 0;
     let right = 0;
@@ -818,6 +830,7 @@ export function open(ctx, config, view) {
   // ---- paint and load ---------------------------------------------------------
   function paint(el, cardEl) {
     host = el;
+    floorWatch?.disconnect();
     const editorOpen = editing() || view.editing();
     el.appendChild(surfaceBarEl());
     if (namingLane && namingLane.parentLaneId == null) el.appendChild(laneNameFormEl(null));
@@ -838,6 +851,8 @@ export function open(ctx, config, view) {
     canvas.addEventListener('drop', e => handleDrop(e, null, null));
     el.appendChild(canvas);
     placeFloor(floor);
+    floorWatch = new ResizeObserver(() => placeFloor(floor));
+    for (const tile of canvas.querySelectorAll(':scope > .board-lane')) floorWatch.observe(tile);
     const at = readScroll();
     canvas.scrollTo(at.left, at.top);
     canvas.addEventListener('scroll', writeScroll);
@@ -895,6 +910,6 @@ export function open(ctx, config, view) {
     patch,
     remove,
     drag,
-    dispose: () => document.removeEventListener('paste', onPaste)
+    dispose: () => { floorWatch?.disconnect(); document.removeEventListener('paste', onPaste); }
   };
 }

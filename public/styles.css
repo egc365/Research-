@@ -288,7 +288,7 @@ button:disabled { opacity: .45; cursor: default; }
 .launch-chip .ic { font-size: 1em; line-height: 1; }
 .board-head-btn { background: none; border: 1px solid var(--border); border-radius: 4px;
   color: var(--text); cursor: pointer; padding: 0 6px; margin-left: 4px; font-size: 12px; white-space: nowrap; }
-.board-card { min-width: 140px; max-width: 240px; margin: 4px; height: auto; overflow: visible; }
+.board-card { position: relative; min-width: 140px; max-width: 240px; max-height: 420px; margin: 4px; overflow: auto; }
 .board-card[data-image] { max-width: none; }
 .board-card .board-image { position: relative; width: 180px; max-width: 100%; }
 .board-card .board-image img { display: block; width: 100%; height: auto; }
@@ -310,6 +310,8 @@ button:disabled { opacity: .45; cursor: default; }
 .board-card .title { font-weight: 700; overflow-wrap: anywhere; }
 .board-card .tags, .board-card .fields { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .board-card .body, .board-card .text { overflow-wrap: anywhere; white-space: pre-wrap; word-break: break-word; }
+/* 12 visual lines at line-height 1.5, the count card-view.js previews (PREVIEW_LINES); the rest scrolls inside the body. */
+.board-card .body { max-height: 18em; overflow: auto; }
 .board-card .icon { display: inline-block; font-size: 12px; opacity: .85; cursor: pointer; }
 .board-card .open, .board-card .tag-add, .board-card .field-add {
   background: none; border: 1px solid currentColor; border-radius: 4px; color: inherit;
@@ -332,9 +334,12 @@ button:disabled { opacity: .45; cursor: default; }
 .card-view-grid { display: flex; flex-wrap: wrap; align-items: flex-start; }
 .card-view-grid .board-card { max-width: none; flex: 1 1 200px; }
 .card-view-grid .board-card .body { max-height: 7.5em; overflow: hidden; }
-.board-card .board-card-palette { display: none; }
+/* The palette is clipped away, never display:none, so Tab reaches its dots; it shows under the
+   pointer, while a dot has focus, and while the sticky editor is open. */
+.board-card .board-card-palette { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .board-card:hover .board-card-palette,
-.board-card:focus-within .board-card-palette { display: block; }
+.board-card:has(textarea) .board-card-palette,
+.board-card .board-card-palette:focus-within { position: static; width: auto; height: auto; overflow: visible; clip-path: none; }
 .board-canvas { position: relative; overflow: auto; height: 70vh; min-height: 360px;
   border: 1px solid var(--border); border-radius: var(--radius); overscroll-behavior: contain; }
 .board-canvas > .board-lane { position: absolute; margin: 0; max-width: none; width: 280px; }
@@ -346,10 +351,12 @@ button:disabled { opacity: .45; cursor: default; }
 .board-lane-resize { position: absolute; top: 0; right: -4px; bottom: 0; width: 8px; cursor: ew-resize; }
 .board-lane-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 6px;
   border-bottom: 1px solid var(--border); color: var(--text); }
-.board-lane-title { overflow-wrap: anywhere; }
+.board-lane-title { flex: 1 1 auto; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.board-lane-controls { display: flex; flex-wrap: wrap; align-items: center; margin-left: auto; }
 .board-lane-run { font-variant-numeric: tabular-nums; }
 .board-lane-new { display: flex; gap: 4px; margin: 4px; }
 .board-lane-new input { width: 12em; }
+.board-lane-new .board-lane-width { width: 5em; }
 .board-add-card { min-width: 180px; max-width: 220px; margin: 4px; }
 .board-add-card label { display: block; margin: 4px 0; color: #222; }
 .board-add-card input,

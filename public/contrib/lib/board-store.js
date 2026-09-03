@@ -209,11 +209,11 @@ function apply(state, action, payload) {
       if (t) card.title = t;
     }
     // The sticky face's text. A note is its text, a link shows it as the
-    // title, and a file card keeps it on the row (ADR-023: the whiteboard
-    // never calls the stickies service); an emptied text clears it.
+    // title, and a file or folder card keeps it on the row (ADR-023: the
+    // whiteboard never calls the stickies service); an emptied text clears it.
     if (payload.text !== undefined && payload.text !== null) {
       const t = String(payload.text).trim();
-      if (card.kind === 'file') card.text = t;
+      if (card.kind === 'file' || card.kind === 'folder') card.text = t;
       else if (t) {
         if (card.kind === 'note') {
           card.ref = t;
