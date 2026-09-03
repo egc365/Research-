@@ -305,3 +305,20 @@ test('whiteboard rows carry position and slug; a sketch from before the canvas i
   const stored = parseModel(bag.get(`ro.whiteboard.${ws.root}`));
   assert.deepEqual(stored.lanes.find(l => l.lane_id === hello.lane_id), { ...out, name: 'Task 1 again', slug: 'task-1-again', w: 560 });
 });
+
+test('the whiteboard refuses run-lane: nothing on it is real', async t => {
+  const ws = workspace(t);
+  fakeStorage(t);
+  const ctx = {
+    workspace: { root_path: ws.root },
+    action: (id, action, payload) => plugin.action({ action, payload, surface: 'owner', store: ws.store })
+  };
+  const access = boardStore(ctx, { mode: 'whiteboard' });
+  const lane = await access.call('add-lane', { name: 'sketch' });
+  for (const verb of ['run-lane', 'lane-run-state']) {
+    await assert.rejects(access.call(verb, { laneId: lane.lane_id }),
+      e => e.code === 'BOARD_BAD_INPUT' && e.message === 'The whiteboard has no runs; save it to a project first');
+  }
+  assert.equal(ws.store.db.prepare('SELECT COUNT(*) AS n FROM execution_state').get().n, 0);
+  assert.equal((await access.call('tree', {})).lanes[0].run_id, undefined, 'memory rows never carry a run id');
+});

@@ -1,6 +1,7 @@
 // Contribution: inspect and patch a run's structured state (SKILL.state).
 // Patches merge with null-deletion semantics under an optimistic version
-// check; an invalid patch changes nothing.
+// check; an invalid patch changes nothing. Opened on a run (ctx.run, a
+// lane's counter on the board) it loads that run at once.
 export function mount(el, ctx) {
   let runId = '';
   el.innerHTML = `
@@ -31,6 +32,10 @@ export function mount(el, ctx) {
     versionEl.textContent = `version ${record.state_version} · ${record.updated_at}`;
   }
   el.querySelector('[data-role="load"]').onclick = () => load().catch(e => ctx.notify(e.message, 'error'));
+  if (ctx.run) {
+    el.querySelector('[data-role="run"]').value = ctx.run;
+    load().catch(e => ctx.notify(e.message, 'error'));
+  }
   el.querySelector('[data-role="init"]').onclick = async () => {
     runId = el.querySelector('[data-role="run"]').value.trim();
     if (!runId) return ctx.notify('A run id is required.', 'error');

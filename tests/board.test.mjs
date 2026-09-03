@@ -9,6 +9,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { plugin } from '../plugins/server/board.mjs';
+import { plugin as execution } from '../plugins/server/execution.mjs';
 import { STICKY_COLORS } from '../public/contrib/lib/board-rules.js';
 import { ControlStore } from '../src/store.mjs';
 
@@ -621,4 +622,84 @@ test('landingSpot: a new lane lands at the view corner, nudged right past the bo
   assert.deepEqual(landingSpot(boxes, { x: 24, y: 24 }), { x: 632, y: 24 });
   assert.deepEqual(landingSpot(boxes, { x: 324, y: 424 }), { x: 324, y: 424 }, 'a scrolled view with free space keeps its corner');
   assert.deepEqual(landingSpot(boxes, { x: 30, y: 650 }), { x: 328, y: 650 }, 'the lane at y 700 is in the row, so past it');
+});
+
+// A run: the lane's cards become the steps of an execution-state run in
+// canvas order, the lane row keeps the run id, the header reads the state.
+async function runnableLane(ws) {
+  fs.mkdirSync(path.join(ws.root, 'hello'));
+  const s = { surface: 'hello' };
+  const exec = await act(ws, 'add-lane', { ...s, name: 'execution' });
+  await act(ws, 'add-card', { ...s, laneId: exec.lane_id, kind: 'file', name: 'plan.md' });
+  await act(ws, 'add-card', { ...s, laneId: exec.lane_id, kind: 'file', name: 'a.md' });
+  await act(ws, 'add-card', { ...s, laneId: exec.lane_id, kind: 'file', name: 'README.md' });
+  return { s, exec };
+}
+
+test('run-lane seeds the state from the lane cards in canvas order: own cards, then each child lane depth-first', async t => {
+  const ws = workspace(t);
+  const { s, exec } = await runnableLane(ws);
+  const a = await act(ws, 'add-lane', { ...s, name: 'a', parentLaneId: exec.lane_id });
+  const a1 = await act(ws, 'add-lane', { ...s, name: 'a1', parentLaneId: a.lane_id });
+  const b = await act(ws, 'add-lane', { ...s, name: 'b', parentLaneId: exec.lane_id });
+  await act(ws, 'add-card', { ...s, laneId: b.lane_id, kind: 'note', ref: 'last words' });
+  await act(ws, 'add-card', { ...s, laneId: a1.lane_id, kind: 'file', name: 'deep.md' });
+  await act(ws, 'add-card', { ...s, laneId: a.lane_id, kind: 'folder', name: 'sub' });
+  assert.equal(await act(ws, 'lane-run-state', { ...s, laneId: exec.lane_id }), null, 'no run yet');
+  const run = await act(ws, 'run-lane', { ...s, laneId: exec.lane_id });
+  assert.match(run.runId, /^execution-[0-9a-f]{8}$/);
+  assert.deepEqual({ ...run, runId: '' }, { laneId: exec.lane_id, runId: '', step: 1, total: 6, created: true });
+  const record = ws.store.getExecutionState(run.runId);
+  assert.equal(record.state_version, 0);
+  assert.deepEqual(record.state, {
+    board: { surface: 'hello', lane: 'execution' },
+    steps: [
+      { card: 'hello/plan.md', kind: 'file', status: 'todo' },
+      { card: 'hello/a.md', kind: 'file', status: 'todo' },
+      { card: 'hello/README.md', kind: 'file', status: 'todo' },
+      { card: 'hello/sub', kind: 'folder', status: 'todo' },
+      { card: 'hello/deep.md', kind: 'file', status: 'todo' },
+      { card: 'last words', kind: 'note', status: 'todo' }
+    ],
+    step: 0
+  }, 'a depth-first walk in sort order, a breadth-first one would put deep.md last');
+  const { lanes } = await act(ws, 'tree', s);
+  assert.equal(lanes[0].run_id, run.runId, 'the tree row carries the run id');
+  assert.equal(lanes[0].lanes[0].run_id, null);
+  assert.deepEqual(await act(ws, 'lane-run-state', { ...s, laneId: exec.lane_id }), { laneId: exec.lane_id, runId: run.runId, step: 1, total: 6 });
+});
+
+test('a second run-lane returns the existing run and seeds nothing', async t => {
+  const ws = workspace(t);
+  const { s, exec } = await runnableLane(ws);
+  const first = await act(ws, 'run-lane', { ...s, laneId: exec.lane_id });
+  const again = await act(ws, 'run-lane', { ...s, laneId: exec.lane_id });
+  assert.deepEqual(again, { ...first, created: false });
+  assert.equal(ws.store.getExecutionState(first.runId).state_version, 0);
+  assert.equal(ws.store.db.prepare('SELECT COUNT(*) AS n FROM execution_state').get().n, 1);
+});
+
+test('an agent-port patch advances the step and the lane read reflects it; the agent may not run a lane', async t => {
+  const ws = workspace(t);
+  const { s, exec } = await runnableLane(ws);
+  await assert.rejects(act(ws, 'run-lane', { ...s, laneId: exec.lane_id }, 'agent'), e => e.code === 'OWNER_SURFACE_ONLY');
+  const run = await act(ws, 'run-lane', { ...s, laneId: exec.lane_id });
+  const { state } = ws.store.getExecutionState(run.runId);
+  const steps = state.steps.map((step, i) => (i === 0 ? { ...step, status: 'done' } : step));
+  const patched = await execution.action({ action: 'patch', payload: { runId: run.runId, patch: { step: 1, steps }, expectedVersion: 0 }, surface: 'agent', store: ws.store });
+  assert.equal(patched.state_version, 1);
+  assert.deepEqual(patched.state.steps.map(x => x.status), ['done', 'todo', 'todo']);
+  assert.deepEqual(await act(ws, 'lane-run-state', { ...s, laneId: exec.lane_id }, 'agent'), { laneId: exec.lane_id, runId: run.runId, step: 2, total: 3 });
+  await assert.rejects(execution.action({ action: 'patch', payload: { runId: run.runId, patch: { step: 2 }, expectedVersion: 0 }, surface: 'agent', store: ws.store }),
+    e => e.code === 'STATE_VERSION_CONFLICT');
+  assert.equal((await act(ws, 'lane-run-state', { ...s, laneId: exec.lane_id })).step, 2, 'a stale patch changed nothing');
+});
+
+test('run-lane on a lane of another surface, or no lane, is refused before anything is written', async t => {
+  const ws = workspace(t);
+  const { exec } = await runnableLane(ws);
+  await assert.rejects(act(ws, 'run-lane', { surface: '', laneId: exec.lane_id }), e => e.code === 'BOARD_BAD_INPUT');
+  await assert.rejects(act(ws, 'run-lane', { surface: 'hello', laneId: 999 }), e => e.code === 'BOARD_NOT_FOUND');
+  assert.equal(ws.store.db.prepare('SELECT COUNT(*) AS n FROM execution_state').get().n, 0);
+  assert.equal((await act(ws, 'tree', { surface: 'hello' })).lanes[0].run_id, null);
 });

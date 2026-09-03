@@ -151,5 +151,5 @@ test('inbox open passes the row workspace into activateStation as root', () => {
   assert.match(inbox, /file:\s*row\.relativePath \|\| row\.path/);
   assert.doesNotMatch(inbox, /selectFile\(row\.path\)\s*\.then\(\s*\(\)\s*=>\s*ctx\.activateStation\('validation-center'\)/);
   const kernel = fs.readFileSync(path.join(here, '..', 'public', 'kernel.js'), 'utf8');
-  assert.match(kernel, /async function activateStation\(stationId, \{ path, root, file \}/);
+  assert.match(kernel, /async function activateStation\(stationId, \{ path, run, root, file \}/);
 });
