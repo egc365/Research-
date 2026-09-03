@@ -1074,7 +1074,7 @@ async function openProjectDialog() {
   projectDialog.showModal();
 }
 
-async function recompose(keepStation = true, preferStation = null, run = null) {
+async function recompose(keepStation = true, preferStation = null) {
   disposeMounts();
   await loadComposition();
   if (workspaceMissing()) {
@@ -1211,7 +1211,7 @@ async function loadWorkspaces(selectPath = null, { restoreMemory = true, station
     kernel.card = null;
     bus.emit('workspace', kernel.workspace);
     await loadPrefs().catch(showError);
-    await recompose(false, station, run);
+    await recompose(false, station);
     await renderSidebar().catch(showError);
     if (restoreMemory) {
       const rememberedFile = kernel.workspace ? uiMemory.read().selection?.[kernel.workspace.root_path] : null;

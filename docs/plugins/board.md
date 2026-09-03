@@ -30,9 +30,9 @@ A lane runs. `run-lane { surface, laneId }` seeds an execution-state run
 `{ board: { surface, lane: <slug> }, steps: [{ card, kind, status }...], step }`,
 the lane's own cards first, then each child lane's cards depth-first, in
 canvas order; a folder card is not a step. A lane with no steps refuses to
-run (`Nothing to run`). The lane
-row keeps only the run id; `lane-run-state { surface, laneId }` reads
-`{ laneId, runId, step, total }` from the state for the header counter, and the
-counter opens the Execution state station on that run
-(`activateStation('execution-state', { run })`, carried in the URL as `run=`).
-A second `run-lane` returns the existing run. The whiteboard refuses both.
+run (`Nothing to run`). The lane row keeps only the run id;
+`lane-run-state { surface, laneId }` reads `{ laneId, runId, step, total }`
+from the state for the header counter, and the counter opens the Execution
+state station on that run (`activateStation('execution-state', { run })`,
+carried in the URL as `run=`). A second `run-lane` returns the existing run.
+The whiteboard refuses both.

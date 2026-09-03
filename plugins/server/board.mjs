@@ -500,7 +500,7 @@ export const plugin = {
       if (lane.run_id != null) return { ...laneRun(exec, lane), created: false };
       const runId = `${lane.slug || 'lane'}-${crypto.randomBytes(4).toString('hex')}`;
       const steps = planSteps(laneNode(tree(db, surface).lanes, lane.lane_id));
-      if (!steps.length) throw fail('BOARD_BAD_INPUT', 'Nothing to run: the lane has no cards');
+      if (!steps.length) throw fail('BOARD_BAD_INPUT', 'Nothing to run: the lane has no runnable cards');
       db.exec('BEGIN');
       try {
         db.prepare('UPDATE board_lanes SET run_id=? WHERE lane_id=?').run(runId, lane.lane_id);
