@@ -612,6 +612,17 @@ test('face is null until flipped, then persists on file, note, and folder cards'
   await assert.rejects(act(ws, 'update-card', { cardId: file.card_id, icon: 'xyz' }), e => e.code === 'BOARD_BAD_INPUT');
 });
 
+test('clampLaneWidth: a typed or dragged width is held to the rules, empty means the stylesheet width', async () => {
+  const { clampLaneWidth, LANE_MIN_W, LANE_MAX_W } = await import('../public/contrib/lib/board-rules.js');
+  assert.equal(clampLaneWidth(''), null);
+  assert.equal(clampLaneWidth(null), null);
+  assert.equal(clampLaneWidth('wide'), null);
+  assert.equal(clampLaneWidth(400), 400);
+  assert.equal(clampLaneWidth('400.6'), 401);
+  assert.equal(clampLaneWidth(50), LANE_MIN_W);
+  assert.equal(clampLaneWidth(9000), LANE_MAX_W);
+});
+
 test('landingSpot: a new lane lands at the view corner, nudged right past the boxes it would overlap', async () => {
   const { landingSpot, LANE_GAP } = await import('../public/contrib/lib/board-rules.js');
   assert.deepEqual(landingSpot([]), { x: LANE_GAP, y: LANE_GAP });
@@ -667,6 +678,14 @@ test('run-lane seeds the state from the lane cards in canvas order: own cards, t
   assert.equal(lanes[0].run_id, run.runId, 'the tree row carries the run id');
   assert.equal(lanes[0].lanes[0].run_id, null);
   assert.deepEqual(await act(ws, 'lane-run-state', { ...s, laneId: exec.lane_id }), { laneId: exec.lane_id, runId: run.runId, step: 1, total: 6 });
+});
+
+test('run-lane on a lane with no cards is refused: nothing to run', async t => {
+  const ws = workspace(t);
+  const empty = await act(ws, 'add-lane', { name: 'empty' });
+  await assert.rejects(act(ws, 'run-lane', { laneId: empty.lane_id }), e => e.code === 'BOARD_BAD_INPUT' && /nothing to run/i.test(e.message));
+  assert.equal((await act(ws, 'tree')).lanes[0].run_id, null, 'no run id on the lane');
+  assert.equal(ws.store.db.prepare('SELECT COUNT(*) AS n FROM execution_state').get().n, 0, 'no state row seeded');
 });
 
 test('a second run-lane returns the existing run and seeds nothing', async t => {
