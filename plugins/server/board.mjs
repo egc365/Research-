@@ -432,6 +432,7 @@ function tree(db, surface) {
 
 // The lane's plan: its own cards, then each child lane's cards, depth-first,
 // in canvas order, so serial and parallel order on the canvas is step order.
+// A folder card is a surface to open, not a step (owner, RO-24b).
 function laneNode(nodes, laneId) {
   for (const node of nodes) {
     if (node.lane_id === laneId) return node;
@@ -442,7 +443,7 @@ function laneNode(nodes, laneId) {
 }
 
 function planSteps(node, out = []) {
-  for (const card of node.cards) out.push({ card: card.ref, kind: card.kind, status: 'todo' });
+  for (const card of node.cards) if (card.kind !== 'folder') out.push({ card: card.ref, kind: card.kind, status: 'todo' });
   for (const sub of node.lanes) planSteps(sub, out);
   return out;
 }

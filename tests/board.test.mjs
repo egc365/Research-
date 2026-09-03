@@ -647,7 +647,7 @@ async function runnableLane(ws) {
   return { s, exec };
 }
 
-test('run-lane seeds the state from the lane cards in canvas order: own cards, then each child lane depth-first', async t => {
+test('run-lane seeds the state from the lane cards in canvas order: own cards, then each child lane depth-first; a folder card is not a step', async t => {
   const ws = workspace(t);
   const { s, exec } = await runnableLane(ws);
   const a = await act(ws, 'add-lane', { ...s, name: 'a', parentLaneId: exec.lane_id });
@@ -659,7 +659,7 @@ test('run-lane seeds the state from the lane cards in canvas order: own cards, t
   assert.equal(await act(ws, 'lane-run-state', { ...s, laneId: exec.lane_id }), null, 'no run yet');
   const run = await act(ws, 'run-lane', { ...s, laneId: exec.lane_id });
   assert.match(run.runId, /^execution-[0-9a-f]{8}$/);
-  assert.deepEqual({ ...run, runId: '' }, { laneId: exec.lane_id, runId: '', step: 1, total: 6, created: true });
+  assert.deepEqual({ ...run, runId: '' }, { laneId: exec.lane_id, runId: '', step: 1, total: 5, created: true });
   const record = ws.store.getExecutionState(run.runId);
   assert.equal(record.state_version, 0);
   assert.deepEqual(record.state, {
@@ -668,22 +668,23 @@ test('run-lane seeds the state from the lane cards in canvas order: own cards, t
       { card: 'hello/plan.md', kind: 'file', status: 'todo' },
       { card: 'hello/a.md', kind: 'file', status: 'todo' },
       { card: 'hello/README.md', kind: 'file', status: 'todo' },
-      { card: 'hello/sub', kind: 'folder', status: 'todo' },
       { card: 'hello/deep.md', kind: 'file', status: 'todo' },
       { card: 'last words', kind: 'note', status: 'todo' }
     ],
     step: 0
-  }, 'a depth-first walk in sort order, a breadth-first one would put deep.md last');
+  }, 'a depth-first walk in sort order, a breadth-first one would put deep.md last; the folder card sub is skipped');
   const { lanes } = await act(ws, 'tree', s);
   assert.equal(lanes[0].run_id, run.runId, 'the tree row carries the run id');
   assert.equal(lanes[0].lanes[0].run_id, null);
-  assert.deepEqual(await act(ws, 'lane-run-state', { ...s, laneId: exec.lane_id }), { laneId: exec.lane_id, runId: run.runId, step: 1, total: 6 });
+  assert.deepEqual(await act(ws, 'lane-run-state', { ...s, laneId: exec.lane_id }), { laneId: exec.lane_id, runId: run.runId, step: 1, total: 5 });
 });
 
 test('run-lane on a lane with no cards is refused: nothing to run', async t => {
   const ws = workspace(t);
   const empty = await act(ws, 'add-lane', { name: 'empty' });
   await assert.rejects(act(ws, 'run-lane', { laneId: empty.lane_id }), e => e.code === 'BOARD_BAD_INPUT' && /nothing to run/i.test(e.message));
+  await act(ws, 'add-card', { laneId: empty.lane_id, kind: 'folder', name: 'only-a-folder' });
+  await assert.rejects(act(ws, 'run-lane', { laneId: empty.lane_id }), e => e.code === 'BOARD_BAD_INPUT', 'a lane holding only a folder card has nothing to run');
   assert.equal((await act(ws, 'tree')).lanes[0].run_id, null, 'no run id on the lane');
   assert.equal(ws.store.db.prepare('SELECT COUNT(*) AS n FROM execution_state').get().n, 0, 'no state row seeded');
 });
