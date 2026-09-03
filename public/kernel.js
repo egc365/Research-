@@ -204,6 +204,16 @@ function sameNav(a, b) {
 
 let skipHistory = false;
 
+async function withoutHistory(fn) {
+  const prevSkip = skipHistory;
+  skipHistory = true;
+  try {
+    return await fn();
+  } finally {
+    skipHistory = prevSkip;
+  }
+}
+
 function commitHistory(mode) {
   const state = snapshot();
   const url = urlFrom(state);
@@ -869,12 +879,40 @@ function mountPaneResizer(slotEls) {
   };
 }
 
+async function enableIfOff(root, stationId) {
+  const composition = await request(`/api/composition?root=${encodeURIComponent(root)}`);
+  if ((composition.enabled || []).some(row => row.plugin_id === stationId)) return false;
+  await request('/api/composition/workspace', {
+    method: 'POST',
+    body: JSON.stringify({ rootPath: root, pluginId: stationId, enabled: true })
+  });
+  return true;
+}
+
 // `path` opens the station on that board surface (Save to project lands on
 // its new folder); without it the surface is whatever the kernel holds.
 // `run` opens it on that execution-state run (a lane's counter); an
 // activation without one has none.
-async function activateStation(stationId, { path, run } = {}) {
+// `root` enables the station on that workspace if it is off, then switches
+// (Inbox rows from another workspace) so switch and activation are one
+// navigation; `file` selects that artifact before the station paints.
+async function activateStation(stationId, { path, run, root, file } = {}) {
   if (navigationBlocked()) return;
+  const fromWs = kernel.workspace?.root_path || null;
+  const fromStation = kernel.activeStation;
+  const fromRun = kernel.run || null;
+  const nextRun = run == null ? null : String(run);
+
+  let enabledNow = false;
+  if (root && root !== fromWs) {
+    enabledNow = await enableIfOff(root, stationId);
+    kernel.boardPath = [];
+    await withoutHistory(() => loadWorkspaces(root, { restoreMemory: false, station: stationId, run: nextRun }));
+  } else if (root != null && kernel.workspace && !enabledStations().some(row => row.plugin_id === stationId)) {
+    await withoutHistory(() => togglePlugin(stationId, true));
+    enabledNow = true;
+  }
+
   // Guard before tearing anything down: a target station that is not enabled
   // for this workspace must not blank the current view ("Open in X" buttons).
   const station = enabledStations().find(row => row.plugin_id === stationId);
@@ -883,12 +921,24 @@ async function activateStation(stationId, { path, run } = {}) {
     if (kernel.activeStation) return;
     return renderEmptyFrame();
   }
-  const previous = kernel.activeStation;
-  const previousRun = kernel.run;
+
+  if (file) await withoutHistory(() => selectFile(file));
+
+  if (Array.isArray(path)) kernel.boardPath = path.map(String);
+  kernel.run = nextRun;
+
+  const switched = Boolean(root && root !== fromWs);
+  const alreadyOn = kernel.activeStation === stationId;
+  if (enabledNow) notify(`Enabled ${stationId} for this workspace.`, 'ok');
+  if (switched && alreadyOn) {
+    if (kernel.workspace) uiMemory.patch(s => { (s.station ??= {})[kernel.workspace.root_path] = stationId; });
+    renderStationBar();
+    if (!skipHistory) commitHistory('push');
+    return;
+  }
+
   disposeMounts();
   kernel.activeStation = stationId;
-  if (Array.isArray(path)) kernel.boardPath = path.map(String);
-  kernel.run = run == null ? null : String(run);
   if (kernel.workspace) uiMemory.patch(s => { (s.station ??= {})[kernel.workspace.root_path] = stationId; });
   renderStationBar();
   const layout = station.manifest.layout || 'main';
@@ -976,7 +1026,11 @@ async function activateStation(stationId, { path, run } = {}) {
     if (!el.children.length) el.innerHTML = `<div class="empty">Empty slot: ${esc(name)}. Wire a contribution in Plugins ⚙.</div>`;
   }
   if (stationId === HOME_STATION && slotEls.main) mountBoardFrameChrome(slotEls.main);
-  if (!skipHistory && (previous !== stationId || previousRun !== kernel.run)) commitHistory('push');
+  if (!skipHistory) {
+    const moved = switched || stationId !== fromStation || fromRun !== nextRun;
+    if (moved) commitHistory('push');
+    else if (file) commitHistory('replace');
+  }
 }
 
 function mountBoardFrameChrome(slotMain) {
@@ -1042,7 +1096,7 @@ async function recompose(keepStation = true, preferStation = null, run = null) {
     : pick(remembered) ? remembered
     : pick(HOME_STATION) ? HOME_STATION
     : available[0].plugin_id;
-  await activateStation(target, { run });
+  await activateStation(target, { run: kernel.run });
 }
 
 // ------------------------------------------------------------------ sidebar
@@ -1134,12 +1188,11 @@ $('sidebarPlugins').onclick = () => openPluginManager();
 
 // ---------------------------------------------------------------- workspaces
 
-async function loadWorkspaces(selectPath = null, { restoreMemory = true, station = null, run = null } = {}) {
+async function loadWorkspaces(selectPath = null, { restoreMemory = true, station = null, run } = {}) {
   const pushAfter = !skipHistory;
   if (pushAfter) kernel.boardPath = [];
-  const prevSkip = skipHistory;
-  skipHistory = true;
-  try {
+  kernel.run = run == null ? null : String(run);
+  await withoutHistory(async () => {
     kernel.workspaces = await request('/api/workspaces');
     // A contribution (the launchpad) may ask the kernel to switch workspaces.
     if (!kernel._switchHooked) {
@@ -1164,9 +1217,7 @@ async function loadWorkspaces(selectPath = null, { restoreMemory = true, station
       const rememberedFile = kernel.workspace ? uiMemory.read().selection?.[kernel.workspace.root_path] : null;
       if (rememberedFile) await selectFile(rememberedFile).catch(() => { /* the file may be gone; stay silent */ });
     }
-  } finally {
-    skipHistory = prevSkip;
-  }
+  });
   if (pushAfter) commitHistory('push');
 }
 
@@ -1567,7 +1618,7 @@ async function applyState(state) {
     const wantWs = state.ws || null;
     const haveWs = kernel.workspace?.root_path || null;
     if (wantWs !== haveWs) await loadWorkspaces(wantWs, { restoreMemory: false, station: state.station, run: state.run });
-    if ((state.station && state.station !== kernel.activeStation) || (state.run || null) !== kernel.run) {
+    if ((state.station && state.station !== kernel.activeStation) || (state.run || null) !== (kernel.run || null)) {
       await activateStation(state.station || kernel.activeStation, { run: state.run });
     } else {
       bus.emit('board-path', { path: kernel.boardPath, source: 'history' });
@@ -1597,11 +1648,11 @@ async function boot() {
   skipHistory = true;
   try {
     kernel.boardPath = state.path || [];
-    // The URL's station and run reach recompose, so a run URL mounts its station once.
     await loadWorkspaces(state.ws, { restoreMemory: !fromUrl, station: fromUrl ? state.station : null, run: fromUrl ? state.run : null });
     if (fromUrl) {
-      if (state.station && state.station !== kernel.activeStation) await activateStation(state.station, { run: state.run });
-      else bus.emit('board-path', { path: kernel.boardPath, source: 'history' });
+      if ((state.station && state.station !== kernel.activeStation) || (state.run || null) !== (kernel.run || null)) {
+        await activateStation(state.station || kernel.activeStation, { run: state.run });
+      } else bus.emit('board-path', { path: kernel.boardPath, source: 'history' });
       if (state.file && kernel.workspace) {
         const abs = state.file.startsWith('/') ? state.file : `${kernel.workspace.root_path}/${state.file}`;
         await selectFile(abs).catch(() => {});

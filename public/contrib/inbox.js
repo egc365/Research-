@@ -48,9 +48,10 @@ export function mount(el, ctx) {
         open.textContent = 'open in Validation center';
         open.onclick = event => {
           event.stopPropagation();
-          ctx.selectFile(row.path)
-            .then(() => ctx.activateStation('validation-center'))
-            .catch(e => ctx.notify(e.message, 'error'));
+          ctx.activateStation('validation-center', {
+            root: row.workspace_root,
+            file: row.relativePath || row.path
+          }).catch(e => ctx.notify(e.message, 'error'));
         };
         item.innerHTML = `
           <span class="grow" title="${ctx.esc(row.path)}">${ctx.esc(row.relativePath || row.path)}</span>

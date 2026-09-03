@@ -144,3 +144,12 @@ test('activity-view is catalogued and seeds on provenance after the timeline', t
   const wired = store.stationContributions('provenance-viewer').map(r => r.contribution_id);
   assert.ok(wired.includes('activity-view'));
 });
+
+test('inbox open passes the row workspace into activateStation as root', () => {
+  const inbox = fs.readFileSync(path.join(here, '..', 'public', 'contrib', 'inbox.js'), 'utf8');
+  assert.match(inbox, /activateStation\(\s*'validation-center'\s*,\s*\{[\s\S]*root:\s*row\.workspace_root/);
+  assert.match(inbox, /file:\s*row\.relativePath \|\| row\.path/);
+  assert.doesNotMatch(inbox, /selectFile\(row\.path\)\s*\.then\(\s*\(\)\s*=>\s*ctx\.activateStation\('validation-center'\)/);
+  const kernel = fs.readFileSync(path.join(here, '..', 'public', 'kernel.js'), 'utf8');
+  assert.match(kernel, /async function activateStation\(stationId, \{ path, run, root, file \}/);
+});
